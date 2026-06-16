@@ -198,6 +198,46 @@ def pull_weather_panel(
     return _concurrent_concat(_one, dates, max_workers)
 
 
+def pull_ndvi_panel(
+    cfg: Config, grid, dates: pd.DatetimeIndex, *, max_workers: int = 8, chunk: int = 500
+) -> pd.DataFrame:
+    """Per (cell_id, date) MODIS NDVI, as a **separate** cached layer.
+
+    Kept apart from the weather pull so adding it doesn't invalidate an existing
+    weather cache (different columns). MOD13A1 is 16-day, so each weekly step uses
+    the most recent composite in a trailing window.
+    """
+    import ee
+
+    ds = cfg["datasets"]
+    cache = _cache_dir(cfg, len(grid))
+    done = {"n": 0}
+
+    def _one(t):
+        cp = cache / f"ndvi_{t.date()}.parquet"
+        if cp.exists():
+            done["n"] += 1
+            return pd.read_parquet(cp)
+        start = ee.Date(str(t.date()))
+        end = start.advance(8, "day")
+        ndvi = (
+            ee.ImageCollection(ds["modis_ndvi"]).filterDate(start.advance(-32, "day"), end)
+            .select("NDVI").mean().multiply(0.0001).rename("ndvi")
+        )
+        # Single-band mean -> reduceRegions names the output "mean" (multi-band reduces
+        # use band names), so read "mean" and rename.
+        df = _reduce_over_grid(ndvi, grid, ["mean"], scale=1000, chunk=chunk).rename(
+            columns={"mean": "ndvi"}
+        )
+        df["date"] = t
+        df.to_parquet(cp, index=False)
+        done["n"] += 1
+        logger.info("ndvi %s (%d/%d)", t.date(), done["n"], len(dates))
+        return df
+
+    return _concurrent_concat(_one, dates, max_workers)
+
+
 def _concurrent_concat(fn, items, max_workers: int) -> pd.DataFrame:
     """Run ``fn`` over ``items`` in a thread pool and concat the resulting frames."""
     from concurrent.futures import ThreadPoolExecutor
@@ -325,10 +365,12 @@ def build_canonical_tables(
     )
     static = pull_static(cfg, grid)
     weather = pull_weather_panel(cfg, grid, dates, max_workers=max_workers)
+    ndvi = pull_ndvi_panel(cfg, grid, dates, max_workers=max_workers)
     labels = pull_fire_labels(cfg, grid, dates, max_workers=max_workers)
 
-    panel = weather.merge(labels[["cell_id", "date", "fire", "burned_frac", "active_frac"]],
-                          on=["cell_id", "date"], how="left")
+    panel = weather.merge(ndvi, on=["cell_id", "date"], how="left")
+    panel = panel.merge(labels[["cell_id", "date", "fire", "burned_frac", "active_frac"]],
+                        on=["cell_id", "date"], how="left")
     panel["fire"] = panel["fire"].fillna(0).astype("int8")
 
     grid = grid.merge(static, on="cell_id", how="left")

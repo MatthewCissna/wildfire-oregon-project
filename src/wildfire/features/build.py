@@ -59,6 +59,10 @@ def _add_temporal(df: pd.DataFrame, step_days: int = 7) -> pd.DataFrame:
         steps_since = df.groupby([df["cell_id"], dry_block]).cumcount()
         df["days_since_rain"] = (steps_since * step_days).astype(float)
 
+    # NDVI anomaly vs the cell's own greenness baseline (vegetation-type-relative).
+    if "ndvi" in df.columns and "ndvi_anom" not in df.columns:
+        df["ndvi_anom"] = df["ndvi"] - df.groupby("cell_id")["ndvi"].transform("mean")
+
     for col in _ROLL_COLS:
         if col not in df:
             continue
