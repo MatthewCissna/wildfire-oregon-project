@@ -47,6 +47,25 @@ def grid_to_ee(grid):
     return ee.FeatureCollection(feats)
 
 
+def _getinfo_with_retry(obj, *, retries: int = 5):
+    """``getInfo`` with exponential backoff on transient/rate-limit errors."""
+    import time
+
+    import ee
+
+    transient = ("too many", "timed out", "timeout", "quota", "rate limit",
+                 "backend error", "internal error", "unavailable", "deadline")
+    for k in range(retries):
+        try:
+            return obj.getInfo()
+        except ee.ee_exception.EEException as exc:
+            msg = str(exc).lower()
+            if k < retries - 1 and any(tok in msg for tok in transient):
+                time.sleep(min(30, 2 ** k))
+                continue
+            raise
+
+
 def _reduce_over_grid(
     image, grid, value_props: list[str], *, scale: int, reducer=None,
     chunk: int = 100, tile_scale: int = 4,
@@ -75,7 +94,7 @@ def _reduce_over_grid(
         reduced = image.reduceRegions(
             collection=fc, reducer=reducer, scale=scale, tileScale=tile_scale
         )
-        data = reduced.select(props, None, False).getInfo()  # drop geometry from payload
+        data = _getinfo_with_retry(reduced.select(props, None, False))  # drop geometry
         frames.append(
             pd.DataFrame([f["properties"] for f in data["features"]], columns=props)
         )
@@ -129,41 +148,52 @@ _GRIDMET_BANDS = {
 }
 
 
-def pull_weather_panel(cfg: Config, grid, dates: pd.DatetimeIndex) -> pd.DataFrame:
+def pull_weather_panel(
+    cfg: Config, grid, dates: pd.DatetimeIndex, *, max_workers: int = 8, chunk: int = 400
+) -> pd.DataFrame:
     """Period-composited GRIDMET weather + GRIDMET/DROUGHT PDSI reduced per cell.
 
-    Each row is one (cell_id, date) with the period's mean of the GRIDMET bands.
+    Timesteps are pulled **concurrently** (GRIDMET is light at 4 km), which is what
+    makes a multi-year pull feasible.
     """
     import ee
 
     ds = cfg["datasets"]
     step_days = {"daily": 1, "weekly": 7, "monthly": 30}.get(cfg.get("time.step"), 7)
+    done = {"n": 0}
 
-    frames = []
-    for t in dates:
+    def _one(t):
         start = ee.Date(str(t.date()))
         end = start.advance(step_days, "day")
         gm = (
-            ee.ImageCollection(ds["gridmet"])
-            .filterDate(start, end)
-            .select(list(_GRIDMET_BANDS.keys()))
-            .mean()
+            ee.ImageCollection(ds["gridmet"]).filterDate(start, end)
+            .select(list(_GRIDMET_BANDS.keys())).mean()
         )
         drought = (
-            ee.ImageCollection(ds["gridmet_drought"])
-            .filterDate(start.advance(-10, "day"), end)
-            .select(["pdsi"])
-            .mean()
+            ee.ImageCollection(ds["gridmet_drought"]).filterDate(start.advance(-10, "day"), end)
+            .select(["pdsi"]).mean()
         )
-        img = gm.addBands(drought)
         df = _reduce_over_grid(
-            img, grid, [*_GRIDMET_BANDS.keys(), "pdsi"], scale=4000, chunk=200
+            gm.addBands(drought), grid, [*_GRIDMET_BANDS.keys(), "pdsi"], scale=4000, chunk=chunk
         )
         df = df.rename(columns=_GRIDMET_BANDS)
         df["tmax"] = df["tmax"] - 273.15  # Kelvin -> Celsius
         df["date"] = t
-        frames.append(df)
-        logger.info("weather %s: %d cells", t.date(), len(df))
+        done["n"] += 1
+        logger.info("weather %s (%d/%d)", t.date(), done["n"], len(dates))
+        return df
+
+    return _concurrent_concat(_one, dates, max_workers)
+
+
+def _concurrent_concat(fn, items, max_workers: int) -> pd.DataFrame:
+    """Run ``fn`` over ``items`` in a thread pool and concat the resulting frames."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    if max_workers <= 1:
+        return pd.concat([fn(x) for x in items], ignore_index=True)
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        frames = list(ex.map(fn, list(items)))
     return pd.concat(frames, ignore_index=True)
 
 
@@ -201,19 +231,20 @@ def export_weather_panel(cfg: Config, grid_fc, dates: pd.DatetimeIndex):
 # --------------------------------------------------------------------------- #
 # Fire labels (burned area + active fire)
 # --------------------------------------------------------------------------- #
-def pull_fire_labels(cfg: Config, grid, dates: pd.DatetimeIndex) -> pd.DataFrame:
+def pull_fire_labels(
+    cfg: Config, grid, dates: pd.DatetimeIndex, *, max_workers: int = 8, chunk: int = 250
+) -> pd.DataFrame:
     """Per (cell_id, date): burned-area fraction, active-fire detections, and the
-    binary ``fire`` label used by the risk model."""
+    binary ``fire`` label used by the risk model. Timesteps pulled concurrently."""
     import ee
 
     ds = cfg["datasets"]
     step_days = {"daily": 1, "weekly": 7, "monthly": 30}.get(cfg.get("time.step"), 7)
+    done = {"n": 0}
 
-    frames = []
-    for t in dates:
+    def _one(t):
         start = ee.Date(str(t.date()))
         end = start.advance(step_days, "day")
-
         burned = (
             ee.ImageCollection(ds["burned_area"]).filterDate(start.advance(-31, "day"), end)
             .select("BurnDate").max().gt(0).unmask(0).rename("burned")
@@ -222,24 +253,30 @@ def pull_fire_labels(cfg: Config, grid, dates: pd.DatetimeIndex) -> pd.DataFrame
             ee.ImageCollection(ds["thermal"]).filterDate(start, end)
             .select("FireMask").max().gte(7).unmask(0).rename("active")  # 7-9 = fire confidence
         )
-        img = burned.addBands(active)
-        df = _reduce_over_grid(img, grid, ["burned", "active"], scale=500, chunk=200)
+        df = _reduce_over_grid(burned.addBands(active), grid, ["burned", "active"], scale=500, chunk=chunk)
         df = df.rename(columns={"burned": "burned_frac", "active": "active_frac"})
         df["date"] = t
         df["fire"] = ((df["burned_frac"] > 0) | (df["active_frac"] > 0)).astype("int8")
-        frames.append(df)
-        logger.info("labels %s: %d cells, %d positive", t.date(), len(df), int(df["fire"].sum()))
-    return pd.concat(frames, ignore_index=True)
+        done["n"] += 1
+        logger.info("labels %s (%d/%d): %d positive", t.date(), done["n"], len(dates), int(df["fire"].sum()))
+        return df
+
+    return _concurrent_concat(_one, dates, max_workers)
 
 
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
-def build_canonical_tables(cfg: Config | None = None, *, quick: bool = False) -> dict:
+def build_canonical_tables(
+    cfg: Config | None = None, *, quick: bool = False,
+    years: int | None = None, max_workers: int = 8,
+) -> dict:
     """Pull GEE data and assemble the canonical tables (same schema as synthetic).
 
-    ``fire_events`` here is derived from positive cell-weeks; richer point-level
-    events with ignition cause come from NIFC (see ``wildfire.ingest.nifc``).
+    ``years`` limits the pull to the most recent N years (None = full configured
+    range). ``max_workers`` sets timestep concurrency. ``fire_events`` here is
+    derived from positive cell-weeks; richer point-level events with ignition cause
+    come from NIFC (see ``wildfire.ingest.nifc``).
     """
     cfg = cfg or load_config()
     initialize_ee(cfg)
@@ -251,11 +288,15 @@ def build_canonical_tables(cfg: Config | None = None, *, quick: bool = False) ->
     if quick:
         dates = dates[dates.year >= dates.year.max() - 1][:6]
         grid = grid.iloc[:: max(1, len(grid) // 400)].reset_index(drop=True)
+    elif years is not None:
+        dates = dates[dates.year >= dates.year.max() - years + 1]
 
-    logger.info("GEE pull: %d cells x %d timesteps", len(grid), len(dates))
+    logger.info(
+        "GEE pull: %d cells x %d timesteps (%d workers)", len(grid), len(dates), max_workers
+    )
     static = pull_static(cfg, grid)
-    weather = pull_weather_panel(cfg, grid, dates)
-    labels = pull_fire_labels(cfg, grid, dates)
+    weather = pull_weather_panel(cfg, grid, dates, max_workers=max_workers)
+    labels = pull_fire_labels(cfg, grid, dates, max_workers=max_workers)
 
     panel = weather.merge(labels[["cell_id", "date", "fire", "burned_frac", "active_frac"]],
                           on=["cell_id", "date"], how="left")

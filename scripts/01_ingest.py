@@ -20,6 +20,10 @@ def main() -> int:
     src.add_argument("--synthetic", action="store_true", help="use the offline synthetic generator")
     src.add_argument("--gee", action="store_true", help="pull live Earth Engine + NIFC + OSM")
     ap.add_argument("--quick", action="store_true", help="small sample for a fast smoke run")
+    ap.add_argument("--years", type=int, default=None,
+                    help="GEE: limit to the most recent N fire seasons (default: full range)")
+    ap.add_argument("--workers", type=int, default=8,
+                    help="GEE: concurrent timestep requests (default 8)")
     args = ap.parse_args()
 
     init_console()
@@ -32,7 +36,10 @@ def main() -> int:
         print("   Falling back to synthetic. See docs/earth_engine_setup.md.")
         use_synthetic = True
 
-    out = materialize(cfg, synthetic=use_synthetic, quick=args.quick)
+    out = materialize(
+        cfg, synthetic=use_synthetic, quick=args.quick,
+        years=args.years, max_workers=args.workers,
+    )
     m = out["manifest"]
     print("\n✅ Ingest complete")
     print(f"   source        : {m['source']}")

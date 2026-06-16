@@ -35,8 +35,15 @@ def _paths(cfg: Config) -> dict:
     }
 
 
-def materialize(cfg: Config | None = None, *, synthetic: bool = True, quick: bool = False) -> dict:
-    """Build and persist the canonical tables. Returns the in-memory dict too."""
+def materialize(
+    cfg: Config | None = None, *, synthetic: bool = True, quick: bool = False,
+    years: int | None = None, max_workers: int = 8,
+) -> dict:
+    """Build and persist the canonical tables. Returns the in-memory dict too.
+
+    ``years`` (GEE only) limits the pull to the most recent N years; ``max_workers``
+    sets timestep concurrency for the GEE pull.
+    """
     cfg = cfg or load_config()
     cfg.ensure_dirs()
     paths = _paths(cfg)
@@ -50,7 +57,7 @@ def materialize(cfg: Config | None = None, *, synthetic: bool = True, quick: boo
         from wildfire.ingest import earth_engine as gee
         from wildfire.ingest import nifc
 
-        data = gee.build_canonical_tables(cfg, quick=quick)
+        data = gee.build_canonical_tables(cfg, quick=quick, years=years, max_workers=max_workers)
         # Enrich with NIFC ignition-cause static features + better point events.
         events = nifc.load_fire_events(cfg)
         if not events.empty:
