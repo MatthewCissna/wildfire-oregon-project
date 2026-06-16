@@ -151,7 +151,101 @@ def load_patches(cfg: Config | None = None) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Live Earth Engine patch export (turnkey once authenticated)
+# Live Earth Engine patch extraction (synchronous getInfo — no Drive needed)
+# --------------------------------------------------------------------------- #
+def _s2_index_composite(cfg: Config, year: int, oregon):
+    """Cloud-filtered S2 median composite for a fire season + spectral indices."""
+    import ee
+
+    ds = cfg["datasets"]
+    bands6 = ["B2", "B3", "B4", "B8", "B11", "B12"]
+    s2 = (
+        ee.ImageCollection(ds["s2_sr"]).filterDate(f"{year}-05-01", f"{year}-10-31")
+        .filterBounds(oregon)
+        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cfg.get("patches.max_cloud_pct", 40)))
+        .median().select(bands6).divide(10000)
+    )
+    ndvi = s2.normalizedDifference(["B8", "B4"]).rename("NDVI")
+    nbr = s2.normalizedDifference(["B8", "B12"]).rename("NBR")
+    ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
+    bai = s2.expression(
+        "1.0/((0.1-RED)**2+(0.06-NIR)**2)", {"RED": s2.select("B4"), "NIR": s2.select("B8")}
+    ).rename("BAI").clamp(0, 50)  # BAI is unbounded near red~0.1; clamp for stable CNN norm
+    return s2.addBands([ndvi, nbr, ndmi, bai]).select(channel_names(cfg))
+
+
+def pull_s2_patches(
+    cfg: Config | None = None, *, years=(2017, 2018, 2020, 2021, 2023),
+    n_per_class_per_year: int = 150, batch: int = 25,
+) -> dict:
+    """Extract **real** Sentinel-2 fire/no-fire patches via synchronous getInfo.
+
+    For each fire-season year: build an S2 median + index composite, sample
+    fire/non-fire points from the MOD14 active-fire mask, and pull a fixed-size
+    patch around each point with ``neighborhoodToArray`` (batched). No Google Drive
+    round-trip. Returns the same dict shape as :func:`synthetic_patches`.
+    """
+    import ee
+    import h3
+
+    from wildfire.ingest.boundary import oregon_ee_geometry
+    from wildfire.ingest.ee_auth import initialize_ee
+    from wildfire.ingest.earth_engine import _getinfo_with_retry
+
+    cfg = cfg or load_config()
+    initialize_ee(cfg)
+    oregon = oregon_ee_geometry(cfg)
+    channels = channel_names(cfg)
+    size = int(cfg.get("patches.size_px", 64))
+    radius = size // 2  # square kernel -> (2r+1) px; we crop to size
+    scale = int(cfg.get("patches.scale_m", 20))
+    ds = cfg["datasets"]
+
+    X_list, y_list, blocks = [], [], []
+    for year in years:
+        comp = _s2_index_composite(cfg, year, oregon)
+        arr = comp.neighborhoodToArray(ee.Kernel.square(radius, "pixels"))
+        fire_mask = (
+            ee.ImageCollection(ds["thermal"]).filterDate(f"{year}-05-01", f"{year}-10-31")
+            .select("FireMask").max().gte(7).rename("fire").unmask(0).clip(oregon)
+        )
+        pts = fire_mask.stratifiedSample(
+            numPoints=n_per_class_per_year, classBand="fire", region=oregon,
+            scale=1000, geometries=True, seed=cfg.seed,
+        )
+        pts_list = pts.toList(pts.size())
+        n_pts = _getinfo_with_retry(pts.size())
+        for off in range(0, n_pts, batch):
+            fc = ee.FeatureCollection(pts_list.slice(off, off + batch))
+            sampled = arr.sampleRegions(collection=fc, scale=scale, geometries=True)
+            data = _getinfo_with_retry(sampled)
+            for feat in data["features"]:
+                pr = feat["properties"]
+                try:
+                    patch = np.stack(
+                        [np.array(pr[c], dtype=np.float32) for c in channels], axis=0
+                    )
+                except (KeyError, ValueError):
+                    continue  # masked/edge patch with a missing band
+                if patch.shape[1] < size or patch.shape[2] < size:
+                    continue
+                patch = patch[:, :size, :size]
+                if not np.isfinite(patch).all():
+                    continue
+                lon, lat = feat["geometry"]["coordinates"]
+                X_list.append(patch)
+                y_list.append(int(pr["fire"]))
+                blocks.append(h3.cell_to_parent(h3.latlng_to_cell(lat, lon, 6), 3))
+        logger.info("S2 patches %d: total so far %d", year, len(y_list))
+
+    X = np.stack(X_list).astype(np.float32)
+    y = np.array(y_list, dtype=np.int64)
+    meta = pd.DataFrame({"block_id": blocks, "label": y, "source": "sentinel2"})
+    return {"X": X, "y": y, "meta": meta, "channels": channels}
+
+
+# --------------------------------------------------------------------------- #
+# Live Earth Engine patch export (batch Export.toDrive alternative)
 # --------------------------------------------------------------------------- #
 def export_s2_patches_ee(cfg: Config | None = None, *, year: int = 2021, n_points: int = 500):
     """Sample fire / non-fire points and export Sentinel-2 patches via GEE.
