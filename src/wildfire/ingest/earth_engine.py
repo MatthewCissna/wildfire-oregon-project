@@ -115,6 +115,11 @@ def pull_static(cfg: Config, grid) -> pd.DataFrame:
     """Per-cell elevation, slope, aspect, land cover, and a derived fuel-load proxy."""
     import ee
 
+    cp = _cache_dir(cfg, len(grid)) / "static.parquet"
+    if cp.exists():
+        logger.info("static: loaded from cache")
+        return pd.read_parquet(cp)
+
     ds = cfg["datasets"]
     terrain = ee.Terrain.products(ee.Image(ds["elevation"])).select(
         ["elevation", "slope", "aspect"]
@@ -131,6 +136,7 @@ def pull_static(cfg: Config, grid) -> pd.DataFrame:
 
     df = cont.merge(lc, on="cell_id", how="left")
     df["fuel_load"] = df["landcover"].round().map(_WORLDCOVER_FUEL).fillna(0.3)
+    df.to_parquet(cp, index=False)  # checkpoint
     return df
 
 
@@ -160,9 +166,14 @@ def pull_weather_panel(
 
     ds = cfg["datasets"]
     step_days = {"daily": 1, "weekly": 7, "monthly": 30}.get(cfg.get("time.step"), 7)
+    cache = _cache_dir(cfg, len(grid))
     done = {"n": 0}
 
     def _one(t):
+        cp = cache / f"weather_{t.date()}.parquet"
+        if cp.exists():
+            done["n"] += 1
+            return pd.read_parquet(cp)
         start = ee.Date(str(t.date()))
         end = start.advance(step_days, "day")
         gm = (
@@ -179,6 +190,7 @@ def pull_weather_panel(
         df = df.rename(columns=_GRIDMET_BANDS)
         df["tmax"] = df["tmax"] - 273.15  # Kelvin -> Celsius
         df["date"] = t
+        df.to_parquet(cp, index=False)  # checkpoint
         done["n"] += 1
         logger.info("weather %s (%d/%d)", t.date(), done["n"], len(dates))
         return df
@@ -195,6 +207,17 @@ def _concurrent_concat(fn, items, max_workers: int) -> pd.DataFrame:
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         frames = list(ex.map(fn, list(items)))
     return pd.concat(frames, ignore_index=True)
+
+
+def _cache_dir(cfg: Config, n_cells: int):
+    """Per-timestep checkpoint dir, keyed by grid size so quick/full don't collide.
+
+    Lets a long multi-year pull **resume** after an interruption instead of
+    restarting from scratch.
+    """
+    d = cfg.path_for("data_interim") / "_gee_cache" / f"cells{n_cells}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def export_weather_panel(cfg: Config, grid_fc, dates: pd.DatetimeIndex):
@@ -240,9 +263,14 @@ def pull_fire_labels(
 
     ds = cfg["datasets"]
     step_days = {"daily": 1, "weekly": 7, "monthly": 30}.get(cfg.get("time.step"), 7)
+    cache = _cache_dir(cfg, len(grid))
     done = {"n": 0}
 
     def _one(t):
+        cp = cache / f"labels_{t.date()}.parquet"
+        if cp.exists():
+            done["n"] += 1
+            return pd.read_parquet(cp)
         start = ee.Date(str(t.date()))
         end = start.advance(step_days, "day")
         burned = (
@@ -257,6 +285,7 @@ def pull_fire_labels(
         df = df.rename(columns={"burned": "burned_frac", "active": "active_frac"})
         df["date"] = t
         df["fire"] = ((df["burned_frac"] > 0) | (df["active_frac"] > 0)).astype("int8")
+        df.to_parquet(cp, index=False)  # checkpoint
         done["n"] += 1
         logger.info("labels %s (%d/%d): %d positive", t.date(), done["n"], len(dates), int(df["fire"].sum()))
         return df
