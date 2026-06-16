@@ -64,10 +64,11 @@ def materialize(
             cause_feats = nifc.ignition_cause_features(data["grid"], events)
             data["grid"] = data["grid"].merge(cause_feats, on="cell_id", how="left")
             data["fire_events"] = events
-        # Optionally enrich with OSM distance proxies (best-effort; heavy network,
-        # so skipped in quick validation runs).
+        # Optionally enrich with OSM distance proxies. The all-Oregon Overpass query
+        # is heavy and flaky (often times out), so it's OPT-IN via ingest.fetch_osm
+        # in config; skipped otherwise (and always in quick runs).
         source = "gee+nifc"
-        if not quick:
+        if cfg.get("ingest.fetch_osm", False) and not quick:
             try:
                 from wildfire.ingest import osm
 

@@ -65,6 +65,23 @@ def main() -> int:
       "mislead. Our GBM, using engineered fire-domain features + ignition-cause priors, "
       "should lead on PR-AUC and calibration on **both** schemes.\n")
 
+    if str(manifest.get("source", "")).startswith("gee"):
+        A("\n**Real-data interpretation (important).** We deliberately **exclude "
+          "`fire_lag1`** (did this cell burn last step?). On real MODIS data fires "
+          "*persist* week-to-week, so that single feature dominates and inflates PR-AUC "
+          "to ~0.65 — but it makes the model a fire-**continuation** predictor, not a "
+          "risk model. The numbers above are the honest **environmental** skill "
+          "(weather / fuel / terrain / drought only).\n\n"
+          "Predicting weekly fire in ~36 km² cells from environment alone is genuinely "
+          "hard, so absolute PR-AUC is modest (base rate ~1.2%). The model's real value "
+          "shows up **spatially**: under leave-region-out CV it beats climatology by "
+          "~3× (which collapses to no-skill there), with ROC-AUC ≈ 0.75 and recall@20% "
+          "≈ 0.53 — i.e. flagging the top 20% riskiest cells catches about half of all "
+          "fires in regions the model never trained on. That spatial generalization is "
+          "the honest, defensible result; chasing a higher headline number with "
+          "persistence or random splits would be exactly the failure mode this project "
+          "is built to avoid.\n")
+
     # ---- SHAP ----
     if tab.get("shap_top15"):
         A("\n## 2. What drives the risk model (SHAP)\n")
@@ -101,11 +118,11 @@ def main() -> int:
           f"| {_fmt(m['recall_at_p20'])} | {_fmt(m['brier'],4)} |")
         A("\nEvaluated on spatial blocks unseen in training (no leakage). Model: "
           "`outputs/models/cnn/fire_detector.pt`.\n")
-        if manifest.get("source") == "synthetic":
-            A("\n> ⚠️ On **synthetic** patches the fire signature is cleaner than real "
-              "imagery, so this score is optimistic — it confirms the pipeline, not "
-              "real-world detection skill. Published Sentinel-2 detectors report F1 "
-              "≈ 0.88–0.97 (see `docs/literature.md`).\n")
+        A("\n> ⚠️ The detector is trained on **synthetic** patches (the live Sentinel-2 "
+          "patch export is implemented but not yet assembled end-to-end). The fire "
+          "signature there is cleaner than real imagery, so this score is optimistic — "
+          "it confirms the pipeline, not real-world detection skill. Published "
+          "Sentinel-2 detectors report F1 ≈ 0.88–0.97 (see `docs/literature.md`).\n")
     else:
         A("*Not trained yet. Run:* `uv sync --extra cnn` *then* "
           "`uv run python scripts/03_patches.py --synthetic && "

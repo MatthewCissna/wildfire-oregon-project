@@ -46,10 +46,18 @@ def _add_calendar(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _add_temporal(df: pd.DataFrame) -> pd.DataFrame:
+def _add_temporal(df: pd.DataFrame, step_days: int = 7) -> pd.DataFrame:
     """Antecedent rolling windows + autoregressive lag, computed per cell."""
     df = df.sort_values(["cell_id", "date"])
     g = df.groupby("cell_id", sort=False)
+
+    # Days since meaningful rain (>1mm), derived from the precip series if the source
+    # didn't provide it (the GEE path doesn't). A strong fuel-dryness driver.
+    if "precip" in df.columns and "days_since_rain" not in df.columns:
+        wet = df["precip"] > 1.0
+        dry_block = wet.groupby(df["cell_id"]).cumsum()
+        steps_since = df.groupby([df["cell_id"], dry_block]).cumcount()
+        df["days_since_rain"] = (steps_since * step_days).astype(float)
 
     for col in _ROLL_COLS:
         if col not in df:
@@ -107,9 +115,10 @@ def build_feature_matrix(cfg: Config | None = None, data: dict | None = None) ->
     ) + [c for c in _STATIC_COLS if c in grid.columns]
     static = pd.DataFrame(grid[static_cols].copy())
 
+    step_days = {"daily": 1, "weekly": 7, "monthly": 30}.get(cfg.get("time.step"), 7)
     df = panel.merge(static, on="cell_id", how="left")
     df = _add_calendar(df)
-    df = _add_temporal(df)
+    df = _add_temporal(df, step_days=step_days)
     df = _add_interactions(df)
 
     # Drop rows with no static join (shouldn't happen) and reset.
@@ -129,6 +138,11 @@ def feature_columns(df: pd.DataFrame) -> list[str]:
         "cell_id", "date", "fire", "block_id", "geometry",
         "lon", "lat", "year",
         "burned_frac", "active_frac",
+        # fire_lag1 ("did this cell burn last step?") is a valid autoregressive
+        # feature, but on real data fires PERSIST week-to-week, so it dominates and
+        # turns the model into a fire-*continuation* predictor rather than a risk
+        # model. For an honest risk-mapping surface we exclude it; see RESULTS.md.
+        "fire_lag1",
     }
     cols = [
         c for c in df.columns
