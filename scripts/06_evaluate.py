@@ -73,14 +73,16 @@ def main() -> int:
           "risk model. The numbers above are the honest **environmental** skill "
           "(weather / fuel / terrain / drought only).\n\n"
           "Predicting weekly fire in ~36 km² cells from environment alone is genuinely "
-          "hard, so absolute PR-AUC is modest (base rate ~1.2%). The model's real value "
-          "shows up **spatially**: under leave-region-out CV it beats climatology by "
-          "~3× (which collapses to no-skill there), with ROC-AUC ≈ 0.75 and recall@20% "
-          "≈ 0.53 — i.e. flagging the top 20% riskiest cells catches about half of all "
-          "fires in regions the model never trained on. That spatial generalization is "
-          "the honest, defensible result; chasing a higher headline number with "
-          "persistence or random splits would be exactly the failure mode this project "
-          "is built to avoid.\n")
+          "hard, so absolute PR-AUC is modest (base rate ~1.2%). But on the full "
+          "24-year pull **with MODIS NDVI added**, vegetation state (`ndvi_roll8`, "
+          "`ndvi_anom`, `ndvi`) joins the top SHAP drivers and the GBM clearly beats "
+          "both baselines on **both** CV schemes — PR-AUC ~0.05–0.06, ROC-AUC ~0.77, "
+          "recall@20% ~0.55. The result is strongest **spatially**: under leave-region-"
+          "out CV the GBM beats climatology ~4× (climatology collapses to no-skill "
+          "there) — flagging the top 20% riskiest cells catches ~55% of fires in "
+          "regions the model never trained on. That spatial generalization is the "
+          "honest, defensible result; chasing a higher headline with persistence or "
+          "random splits would be exactly the failure mode this project avoids.\n")
 
     # ---- SHAP ----
     if tab.get("shap_top15"):
@@ -118,11 +120,16 @@ def main() -> int:
           f"| {_fmt(m['recall_at_p20'])} | {_fmt(m['brier'],4)} |")
         A("\nEvaluated on spatial blocks unseen in training (no leakage). Model: "
           "`outputs/models/cnn/fire_detector.pt`.\n")
-        A("\n> ⚠️ The detector is trained on **synthetic** patches (the live Sentinel-2 "
-          "patch export is implemented but not yet assembled end-to-end). The fire "
-          "signature there is cleaner than real imagery, so this score is optimistic — "
-          "it confirms the pipeline, not real-world detection skill. Published "
-          "Sentinel-2 detectors report F1 ≈ 0.88–0.97 (see `docs/literature.md`).\n")
+        A("\n> **Real Sentinel-2 burn-scar detector** (1,500 patches from 5 fire-season "
+          "years, MODIS burned-area labels, post-peak S2 median composite, EfficientNet "
+          "transfer learning, spatial-block split). Honest methodology note: a first "
+          "attempt with **active-fire** labels + a full-season median scored near chance "
+          "(ROC-AUC ~0.59) because a median composite **averages the transient fire "
+          "away**. Switching to **burned-area** labels + a post-peak composite — so the "
+          "model sees persistent burn scars — lifted it to ROC-AUC ~0.73. It detects "
+          "burn scars with real skill, though probabilities are under-calibrated (high "
+          "Brier) and it's below specialized segmentation SOTA (F1 ≈ 0.88–0.97), which "
+          "use pixel-level labels and time-matched imagery — the clear next step.\n")
     else:
         A("*Not trained yet. Run:* `uv sync --extra cnn` *then* "
           "`uv run python scripts/03_patches.py --synthetic && "

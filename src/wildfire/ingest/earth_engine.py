@@ -313,14 +313,18 @@ def pull_fire_labels(
             return pd.read_parquet(cp)
         start = ee.Date(str(t.date()))
         end = start.advance(step_days, "day")
-        burned = (
+        # Merge a zero fallback image so .max() always has a band even when the
+        # collection is empty for a given window (avoids "Image has no bands").
+        burned_col = (
             ee.ImageCollection(ds["burned_area"]).filterDate(start.advance(-31, "day"), end)
-            .select("BurnDate").max().gt(0).unmask(0).rename("burned")
+            .select("BurnDate").merge(ee.ImageCollection([ee.Image(0).rename("BurnDate")]))
         )
-        active = (
+        active_col = (
             ee.ImageCollection(ds["thermal"]).filterDate(start, end)
-            .select("FireMask").max().gte(7).unmask(0).rename("active")  # 7-9 = fire confidence
+            .select("FireMask").merge(ee.ImageCollection([ee.Image(0).rename("FireMask")]))
         )
+        burned = burned_col.max().gt(0).unmask(0).rename("burned")
+        active = active_col.max().gte(7).unmask(0).rename("active")  # 7-9 = fire confidence
         df = _reduce_over_grid(burned.addBands(active), grid, ["burned", "active"], scale=500, chunk=chunk)
         df = df.rename(columns={"burned": "burned_frac", "active": "active_frac"})
         df["date"] = t

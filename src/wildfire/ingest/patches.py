@@ -154,13 +154,18 @@ def load_patches(cfg: Config | None = None) -> dict:
 # Live Earth Engine patch extraction (synchronous getInfo — no Drive needed)
 # --------------------------------------------------------------------------- #
 def _s2_index_composite(cfg: Config, year: int, oregon):
-    """Cloud-filtered S2 median composite for a fire season + spectral indices."""
+    """Cloud-filtered S2 **post-peak** median composite + spectral indices.
+
+    Uses a late-season window (Aug–mid-Nov) so cumulative **burn scars** are visible
+    in the median — the signal a seasonal composite can actually capture (an active
+    fire is transient and gets averaged out). Pairs with burned-area labels below.
+    """
     import ee
 
     ds = cfg["datasets"]
     bands6 = ["B2", "B3", "B4", "B8", "B11", "B12"]
     s2 = (
-        ee.ImageCollection(ds["s2_sr"]).filterDate(f"{year}-05-01", f"{year}-10-31")
+        ee.ImageCollection(ds["s2_sr"]).filterDate(f"{year}-08-01", f"{year}-11-15")
         .filterBounds(oregon)
         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cfg.get("patches.max_cloud_pct", 40)))
         .median().select(bands6).divide(10000)
@@ -178,12 +183,14 @@ def pull_s2_patches(
     cfg: Config | None = None, *, years=(2017, 2018, 2020, 2021, 2023),
     n_per_class_per_year: int = 150, batch: int = 25,
 ) -> dict:
-    """Extract **real** Sentinel-2 fire/no-fire patches via synchronous getInfo.
+    """Extract **real** Sentinel-2 burned / unburned patches via synchronous getInfo.
 
-    For each fire-season year: build an S2 median + index composite, sample
-    fire/non-fire points from the MOD14 active-fire mask, and pull a fixed-size
-    patch around each point with ``neighborhoodToArray`` (batched). No Google Drive
-    round-trip. Returns the same dict shape as :func:`synthetic_patches`.
+    For each fire-season year: build a post-peak S2 median + index composite, sample
+    burned/unburned points from the **MODIS burned-area (MCD64A1)** mask, and pull a
+    fixed-size patch around each point with ``neighborhoodToArray`` (batched). We label
+    by burned area (a persistent scar the median composite can see) rather than active
+    fire (transient, averaged out). No Google Drive round-trip. Same dict shape as
+    :func:`synthetic_patches`.
     """
     import ee
     import h3
@@ -205,10 +212,12 @@ def pull_s2_patches(
     for year in years:
         comp = _s2_index_composite(cfg, year, oregon)
         arr = comp.neighborhoodToArray(ee.Kernel.square(radius, "pixels"))
-        fire_mask = (
-            ee.ImageCollection(ds["thermal"]).filterDate(f"{year}-05-01", f"{year}-10-31")
-            .select("FireMask").max().gte(7).rename("fire").unmask(0).clip(oregon)
+        # Burned-area mask (persistent scar) — merge a zero fallback for empty windows.
+        burn_col = (
+            ee.ImageCollection(ds["burned_area"]).filterDate(f"{year}-05-01", f"{year}-11-30")
+            .select("BurnDate").merge(ee.ImageCollection([ee.Image(0).rename("BurnDate")]))
         )
+        fire_mask = burn_col.max().gt(0).rename("fire").unmask(0).clip(oregon)
         pts = fire_mask.stratifiedSample(
             numPoints=n_per_class_per_year, classBand="fire", region=oregon,
             scale=1000, geometries=True, seed=cfg.seed,
