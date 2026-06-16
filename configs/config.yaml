@@ -16,7 +16,7 @@ project:
 # It can also be supplied via the EE_PROJECT environment variable (which wins).
 # Leave as null to run the pipeline on the synthetic-data fallback.
 earth_engine:
-  project_id: null              # e.g. "ee-yourname-wildfire"  (or set $EE_PROJECT)
+  project_id: "wildfire-prediction-499606"   # (or set $EE_PROJECT)
   # High-volume export endpoint is used automatically for large pulls.
   use_highvolume: true
 

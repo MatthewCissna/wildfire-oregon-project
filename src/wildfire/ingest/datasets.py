@@ -57,17 +57,20 @@ def materialize(cfg: Config | None = None, *, synthetic: bool = True, quick: boo
             cause_feats = nifc.ignition_cause_features(data["grid"], events)
             data["grid"] = data["grid"].merge(cause_feats, on="cell_id", how="left")
             data["fire_events"] = events
-        # Optionally enrich with OSM distance proxies (best-effort).
-        try:
-            from wildfire.ingest import osm
+        # Optionally enrich with OSM distance proxies (best-effort; heavy network,
+        # so skipped in quick validation runs).
+        source = "gee+nifc"
+        if not quick:
+            try:
+                from wildfire.ingest import osm
 
-            osm_feats = osm.distance_features(cfg, data["grid"])
-            data["grid"] = data["grid"].merge(
-                osm_feats, on="cell_id", how="left", suffixes=("", "_osm")
-            )
-        except Exception as exc:  # pragma: no cover (network/CPU heavy)
-            logger.warning("OSM enrichment skipped: %s", exc)
-        source = "gee+nifc+osm"
+                osm_feats = osm.distance_features(cfg, data["grid"])
+                data["grid"] = data["grid"].merge(
+                    osm_feats, on="cell_id", how="left", suffixes=("", "_osm")
+                )
+                source = "gee+nifc+osm"
+            except Exception as exc:  # pragma: no cover (network/CPU heavy)
+                logger.warning("OSM enrichment skipped: %s", exc)
 
     grid: gpd.GeoDataFrame = data["grid"]
     grid.to_parquet(paths["grid"])

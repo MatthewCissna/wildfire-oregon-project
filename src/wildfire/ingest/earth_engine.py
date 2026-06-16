@@ -47,48 +47,71 @@ def grid_to_ee(grid):
     return ee.FeatureCollection(feats)
 
 
-def _fc_to_df(fc, properties: list[str]) -> pd.DataFrame:
-    """Pull a (small/medium) FeatureCollection's properties into a DataFrame."""
+def _reduce_over_grid(
+    image, grid, value_props: list[str], *, scale: int, reducer=None,
+    chunk: int = 100, tile_scale: int = 4,
+) -> pd.DataFrame:
+    """Reduce an image onto grid cells in **client-side chunks**.
+
+    A single ``reduceRegions().getInfo()`` over all of Oregon's large hexes times out
+    or blows the memory limit. Chunking the cells (plus a coarse ``scale`` and a
+    higher ``tileScale``) keeps each request inside Earth Engine's limits.
+    """
     import ee
 
-    data = fc.select(properties).getInfo()  # may chunk for very large collections
-    rows = [f["properties"] for f in data["features"]]
-    return pd.DataFrame(rows, columns=properties)
+    reducer = reducer or ee.Reducer.mean()
+    props = ["cell_id", *value_props]
+    rows = list(grid.itertuples(index=False))
+    frames = []
+    for i in range(0, len(rows), chunk):
+        feats = [
+            ee.Feature(
+                ee.Geometry.Polygon([list(map(list, r.geometry.exterior.coords))]),
+                {"cell_id": r.cell_id},
+            )
+            for r in rows[i : i + chunk]
+        ]
+        fc = ee.FeatureCollection(feats)
+        reduced = image.reduceRegions(
+            collection=fc, reducer=reducer, scale=scale, tileScale=tile_scale
+        )
+        data = reduced.select(props, None, False).getInfo()  # drop geometry from payload
+        frames.append(
+            pd.DataFrame([f["properties"] for f in data["features"]], columns=props)
+        )
+    return pd.concat(frames, ignore_index=True)
+
+
+# ESA WorldCover v200 class -> a 0-1 fuel-load proxy (parity with the synthetic path).
+_WORLDCOVER_FUEL = {
+    10: 0.90, 20: 0.60, 30: 0.45, 40: 0.30, 50: 0.10,
+    60: 0.10, 70: 0.00, 80: 0.00, 90: 0.40, 95: 0.55, 100: 0.20,
+}
 
 
 # --------------------------------------------------------------------------- #
 # Static layers
 # --------------------------------------------------------------------------- #
-def pull_static(cfg: Config, grid_fc) -> pd.DataFrame:
-    """Elevation, slope, aspect, land cover, and an NDVI climatology per cell."""
+def pull_static(cfg: Config, grid) -> pd.DataFrame:
+    """Per-cell elevation, slope, aspect, land cover, and a derived fuel-load proxy."""
     import ee
 
     ds = cfg["datasets"]
-    dem = ee.Image(ds["elevation"])
-    terrain = ee.Terrain.products(dem)  # elevation, slope, aspect, hillshade
-    elev = terrain.select(["elevation", "slope", "aspect"])
-
-    landcover = ee.Image(ds["landcover"]).select("Map").rename("landcover")
-
-    ndvi_clim = (
-        ee.ImageCollection(ds["modis_ndvi"])
-        .filterDate(cfg.get("time.start"), cfg.get("time.end"))
-        .select("NDVI")
-        .mean()
-        .multiply(0.0001)
-        .rename("ndvi_clim")
+    terrain = ee.Terrain.products(ee.Image(ds["elevation"])).select(
+        ["elevation", "slope", "aspect"]
     )
+    cont = _reduce_over_grid(terrain, grid, ["elevation", "slope", "aspect"], scale=1000, chunk=100)
 
-    img = elev.addBands(landcover).addBands(ndvi_clim)
-    reduced = img.reduceRegions(
-        collection=grid_fc,
-        reducer=ee.Reducer.mean().combine(ee.Reducer.mode(), sharedInputs=True),
-        scale=int(cfg.get("patches.scale_m", 30)),
-    )
-    df = _fc_to_df(
-        reduced,
-        ["cell_id", "elevation", "slope", "aspect", "landcover", "ndvi_clim"],
-    )
+    # ESA WorldCover is a single-image ImageCollection; take the modal class per cell.
+    # NB: the mode reducer names its output "mode" (only `mean` is named by band),
+    # so we read "mode" and rename it to landcover.
+    lc_img = ee.ImageCollection(ds["landcover"]).first().select("Map")
+    lc = _reduce_over_grid(
+        lc_img, grid, ["mode"], scale=300, reducer=ee.Reducer.mode(), chunk=100
+    ).rename(columns={"mode": "landcover"})
+
+    df = cont.merge(lc, on="cell_id", how="left")
+    df["fuel_load"] = df["landcover"].round().map(_WORLDCOVER_FUEL).fillna(0.3)
     return df
 
 
@@ -106,7 +129,7 @@ _GRIDMET_BANDS = {
 }
 
 
-def pull_weather_panel(cfg: Config, grid_fc, dates: pd.DatetimeIndex) -> pd.DataFrame:
+def pull_weather_panel(cfg: Config, grid, dates: pd.DatetimeIndex) -> pd.DataFrame:
     """Period-composited GRIDMET weather + GRIDMET/DROUGHT PDSI reduced per cell.
 
     Each row is one (cell_id, date) with the period's mean of the GRIDMET bands.
@@ -115,7 +138,6 @@ def pull_weather_panel(cfg: Config, grid_fc, dates: pd.DatetimeIndex) -> pd.Data
 
     ds = cfg["datasets"]
     step_days = {"daily": 1, "weekly": 7, "monthly": 30}.get(cfg.get("time.step"), 7)
-    scale = 4000  # GRIDMET native ~4 km
 
     frames = []
     for t in dates:
@@ -129,13 +151,14 @@ def pull_weather_panel(cfg: Config, grid_fc, dates: pd.DatetimeIndex) -> pd.Data
         )
         drought = (
             ee.ImageCollection(ds["gridmet_drought"])
-            .filterDate(start.advance(-5, "day"), end)
+            .filterDate(start.advance(-10, "day"), end)
             .select(["pdsi"])
             .mean()
         )
         img = gm.addBands(drought)
-        reduced = img.reduceRegions(collection=grid_fc, reducer=ee.Reducer.mean(), scale=scale)
-        df = _fc_to_df(reduced, ["cell_id", *_GRIDMET_BANDS.keys(), "pdsi"])
+        df = _reduce_over_grid(
+            img, grid, [*_GRIDMET_BANDS.keys(), "pdsi"], scale=4000, chunk=200
+        )
         df = df.rename(columns=_GRIDMET_BANDS)
         df["tmax"] = df["tmax"] - 273.15  # Kelvin -> Celsius
         df["date"] = t
@@ -178,7 +201,7 @@ def export_weather_panel(cfg: Config, grid_fc, dates: pd.DatetimeIndex):
 # --------------------------------------------------------------------------- #
 # Fire labels (burned area + active fire)
 # --------------------------------------------------------------------------- #
-def pull_fire_labels(cfg: Config, grid_fc, dates: pd.DatetimeIndex) -> pd.DataFrame:
+def pull_fire_labels(cfg: Config, grid, dates: pd.DatetimeIndex) -> pd.DataFrame:
     """Per (cell_id, date): burned-area fraction, active-fire detections, and the
     binary ``fire`` label used by the risk model."""
     import ee
@@ -193,17 +216,14 @@ def pull_fire_labels(cfg: Config, grid_fc, dates: pd.DatetimeIndex) -> pd.DataFr
 
         burned = (
             ee.ImageCollection(ds["burned_area"]).filterDate(start.advance(-31, "day"), end)
-            .select("BurnDate").max().gt(0).rename("burned")
+            .select("BurnDate").max().gt(0).unmask(0).rename("burned")
         )
         active = (
             ee.ImageCollection(ds["thermal"]).filterDate(start, end)
-            .select("FireMask").max().gte(7).rename("active")  # 7-9 = fire confidence
+            .select("FireMask").max().gte(7).unmask(0).rename("active")  # 7-9 = fire confidence
         )
-        img = burned.unmask(0).addBands(active.unmask(0))
-        reduced = img.reduceRegions(
-            collection=grid_fc, reducer=ee.Reducer.mean(), scale=500
-        )
-        df = _fc_to_df(reduced, ["cell_id", "burned", "active"])
+        img = burned.addBands(active)
+        df = _reduce_over_grid(img, grid, ["burned", "active"], scale=500, chunk=200)
         df = df.rename(columns={"burned": "burned_frac", "active": "active_frac"})
         df["date"] = t
         df["fire"] = ((df["burned_frac"] > 0) | (df["active_frac"] > 0)).astype("int8")
@@ -229,13 +249,13 @@ def build_canonical_tables(cfg: Config | None = None, *, quick: bool = False) ->
     months = set(cfg.get("time.fire_season_months", [5, 6, 7, 8, 9, 10]))
     dates = dates[dates.month.isin(months)]
     if quick:
-        dates = dates[dates.year >= dates.year.max() - 1][:8]
-        grid = grid.iloc[:: max(1, len(grid) // 800)].reset_index(drop=True)
+        dates = dates[dates.year >= dates.year.max() - 1][:6]
+        grid = grid.iloc[:: max(1, len(grid) // 400)].reset_index(drop=True)
 
-    grid_fc = grid_to_ee(grid)
-    static = pull_static(cfg, grid_fc)
-    weather = pull_weather_panel(cfg, grid_fc, dates)
-    labels = pull_fire_labels(cfg, grid_fc, dates)
+    logger.info("GEE pull: %d cells x %d timesteps", len(grid), len(dates))
+    static = pull_static(cfg, grid)
+    weather = pull_weather_panel(cfg, grid, dates)
+    labels = pull_fire_labels(cfg, grid, dates)
 
     panel = weather.merge(labels[["cell_id", "date", "fire", "burned_frac", "active_frac"]],
                           on=["cell_id", "date"], how="left")
