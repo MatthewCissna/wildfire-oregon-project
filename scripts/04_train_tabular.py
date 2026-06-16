@@ -23,7 +23,7 @@ from wildfire.eval.runner import run_cv
 from wildfire.eval.shap_explain import explain_risk
 from wildfire.features.build import feature_columns
 from wildfire.features.regions import build_region_season, region_feature_columns
-from wildfire.models import baselines, count, risk
+from wildfire.models import baselines, count, risk, tune
 from wildfire.utils import init_console
 
 
@@ -39,10 +39,16 @@ def main() -> int:
     df["date"] = pd.to_datetime(df["date"])
     feature_cols = feature_columns(df)
 
+    # Use Optuna-tuned risk params if a tuning run has produced them.
+    best = tune.load_best_risk_params(cfg)
+    risk_params = best["params"] if best else None
+    if risk_params:
+        print("Using Optuna-tuned risk params (from scripts/08_tune.py).")
+
     models = {
         "climatology": baselines.make_climatology_fit_predict(),
         "logistic_weather": baselines.make_logistic_fit_predict(),
-        "risk_gbm": risk.make_fit_predict(),
+        "risk_gbm": risk.make_fit_predict(risk_params),
     }
 
     results = {"schemes": {}, "feature_count": len(feature_cols)}
@@ -63,7 +69,7 @@ def main() -> int:
 
     # ---- final risk model + surface ----
     print("\n=== Fitting final risk model on all data ===")
-    rm = risk.fit_full(df, feature_cols, cfg)
+    rm = risk.fit_full(df, feature_cols, cfg, params=risk_params)
     model_path = cfg.path_for("models") / "risk_model.joblib"
     rm.save(model_path)
 

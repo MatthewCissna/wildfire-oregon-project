@@ -101,6 +101,11 @@ def main() -> int:
           f"| {_fmt(m['recall_at_p20'])} | {_fmt(m['brier'],4)} |")
         A("\nEvaluated on spatial blocks unseen in training (no leakage). Model: "
           "`outputs/models/cnn/fire_detector.pt`.\n")
+        if manifest.get("source") == "synthetic":
+            A("\n> ⚠️ On **synthetic** patches the fire signature is cleaner than real "
+              "imagery, so this score is optimistic — it confirms the pipeline, not "
+              "real-world detection skill. Published Sentinel-2 detectors report F1 "
+              "≈ 0.88–0.97 (see `docs/literature.md`).\n")
     else:
         A("*Not trained yet. Run:* `uv sync --extra cnn` *then* "
           "`uv run python scripts/03_patches.py --synthetic && "

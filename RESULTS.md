@@ -1,6 +1,6 @@
 # RESULTS — Oregon Wildfire ML System
 
-*Source: **synthetic** data (quick sample); 800 grid cells, base fire rate 3.87%.*
+*Source: **synthetic** data (full run); 7,224 grid cells, base fire rate 3.02%.*
 
 > Numbers below are produced by `scripts/06_evaluate.py` from the saved metrics — re-run after training to refresh. With Earth Engine configured and a full run, rerun the pipeline without `--quick` to populate real-data results.
 
@@ -14,17 +14,17 @@ Primary metric is **PR-AUC** (rare-event); higher is better. **lift** = PR-AUC �
 
 | Model | PR-AUC | lift | recall@20% | Brier | ROC-AUC |
 |---|---|---|---|---|---|
-| climatology | 0.115 | 3.0x | 0.526 | 0.0354 | 0.734 |
-| logistic_weather | 0.379 | 10.0x | 0.836 | 0.1322 | 0.912 |
-| risk_gbm **(ours)** | 0.499 | 13.1x | 0.899 | 0.0270 | 0.937 |
+| climatology | 0.067 | 2.2x | 0.470 | 0.0286 | 0.753 |
+| logistic_weather | 0.333 | 11.0x | 0.818 | 0.1326 | 0.901 |
+| risk_gbm **(ours)** | 0.476 | 15.8x | 0.890 | 0.0209 | 0.935 |
 
 ### CV scheme: `spatial_block`
 
 | Model | PR-AUC | lift | recall@20% | Brier | ROC-AUC |
 |---|---|---|---|---|---|
-| climatology | 0.039 | 1.0x | 0.247 | 0.0374 | 0.500 |
-| logistic_weather | 0.374 | 11.9x | 0.828 | 0.1233 | 0.908 |
-| risk_gbm **(ours)** | 0.486 | 15.4x | 0.886 | 0.0257 | 0.934 |
+| climatology | 0.030 | 1.0x | 0.378 | 0.0293 | 0.500 |
+| logistic_weather | 0.335 | 11.2x | 0.816 | 0.1320 | 0.901 |
+| risk_gbm **(ours)** | 0.476 | 15.9x | 0.889 | 0.0208 | 0.934 |
 
 **Reading it:** the climatology baseline (which only exploits *where* fires recur) typically collapses toward no-skill (PR-AUC ≈ base rate, ROC-AUC ≈ 0.5) under `spatial_block` CV — the clearest demonstration of why random splits mislead. Our GBM, using engineered fire-domain features + ignition-cause priors, should lead on PR-AUC and calibration on **both** schemes.
 
@@ -35,18 +35,18 @@ Top features by mean |SHAP| — these should be physical fire drivers, not artif
 
 | # | feature | mean |SHAP| |
 |---|---|---|
-| 1 | `erc` | 1.3705 |
-| 2 | `lightning_density` | 0.4700 |
-| 3 | `days_since_rain` | 0.2890 |
-| 4 | `precip` | 0.2694 |
-| 5 | `fuel_load` | 0.2016 |
-| 6 | `bi` | 0.1614 |
-| 7 | `doy_sin` | 0.1569 |
-| 8 | `erc_roll2` | 0.1423 |
-| 9 | `pdsi` | 0.1389 |
-| 10 | `ndvi_roll8` | 0.1250 |
-| 11 | `erc_roll8` | 0.1146 |
-| 12 | `elevation` | 0.1092 |
+| 1 | `erc` | 1.1545 |
+| 2 | `lightning_density` | 0.5629 |
+| 3 | `doy_sin` | 0.4433 |
+| 4 | `days_since_rain` | 0.3748 |
+| 5 | `doy_cos` | 0.3321 |
+| 6 | `bi` | 0.1999 |
+| 7 | `pdsi` | 0.1884 |
+| 8 | `erc_roll2` | 0.1644 |
+| 9 | `fuel_load` | 0.1487 |
+| 10 | `ndvi_anom` | 0.1478 |
+| 11 | `precip` | 0.1309 |
+| 12 | `month` | 0.1089 |
 
 Figure: `outputs/figures/shap_importance.png`.
 
@@ -55,8 +55,8 @@ Figure: `outputs/figures/shap_importance.png`.
 
 | Model | MAE | RMSE | Poisson deviance | 95% PI coverage |
 |---|---|---|---|---|
-| negbin | 9.481 | 14.728 | 4.419 | 0.72 |
-| poisson | 9.834 | 15.196 | 4.672 | 0.70 |
+| negbin | 125.581 | 309.255 | 22.468 | 0.98 |
+| poisson | 28.738 | 42.492 | 4.656 | 0.61 |
 
 Forward-chaining (by year) CV. The negative-binomial model handles overdispersion, giving calibrated (wider) intervals than Poisson. Per-region predictions: `outputs/metrics/region_count_predictions.csv`; map: `outputs/maps/fire_count_map.html`.
 
@@ -67,9 +67,12 @@ Backbone: `efficientnet_b0` (transfer learning, multi-band input).
 
 | PR-AUC | lift | ROC-AUC | recall@20% | Brier |
 |---|---|---|---|---|
-| 0.733 | 1.8x | 0.810 | 0.420 | 0.2523 |
+| 0.993 | 3.1x | 0.996 | 0.621 | 0.0124 |
 
 Evaluated on spatial blocks unseen in training (no leakage). Model: `outputs/models/cnn/fire_detector.pt`.
+
+
+> ⚠️ On **synthetic** patches the fire signature is cleaner than real imagery, so this score is optimistic — it confirms the pipeline, not real-world detection skill. Published Sentinel-2 detectors report F1 ≈ 0.88–0.97 (see `docs/literature.md`).
 
 
 ## 5. Deliverables

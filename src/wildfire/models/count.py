@@ -111,10 +111,13 @@ def cross_validate_count(
     """Forward-chaining (by year) CV for the count model, with interval coverage."""
     years = np.sort(df["year"].unique())
     fold_metrics = []
+    # Require enough training rows to identify the GLM (avoid overfit folds in
+    # short quick-mode runs); on full multi-year data nearly all folds qualify.
+    min_train = max(5, 2 * len(feature_cols) + 2)
     for ty in years[1:]:
         tr = df[df["year"] < ty]
         te = df[df["year"] == ty]
-        if len(tr) < 5 or len(te) == 0:
+        if len(tr) < min_train or len(te) == 0:
             continue
         model = train_count(tr, feature_cols, cfg, kind=kind)
         pred = model.predict(te)

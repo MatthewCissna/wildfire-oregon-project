@@ -39,3 +39,6 @@ gee-credentials*.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Claude Code / tooling state
+.claude/

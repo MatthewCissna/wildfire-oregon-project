@@ -102,9 +102,9 @@ def build_feature_matrix(cfg: Config | None = None, data: dict | None = None) ->
     panel["date"] = pd.to_datetime(panel["date"])
     grid = data["grid"]
 
-    static_cols = ["cell_id", "lon", "lat", "block_id"] + [
-        c for c in _STATIC_COLS if c in grid.columns
-    ]
+    static_cols = ["cell_id", "lon", "lat", "block_id"] + (
+        ["ecoregion"] if "ecoregion" in grid.columns else []
+    ) + [c for c in _STATIC_COLS if c in grid.columns]
     static = pd.DataFrame(grid[static_cols].copy())
 
     df = panel.merge(static, on="cell_id", how="left")

@@ -38,33 +38,52 @@ def _make_patch_batch(n: int, size: int, c: int, fire: bool, rng: np.random.Gene
     """Generate ``n`` patches (n,c,size,size) with a fire or no-fire spectral signature.
 
     Channels order matches channel_names: [B2,B3,B4,B8,B11,B12, NDVI,NBR,NDMI,BAI].
-    No-fire: vegetated (high NIR/B8, high NDVI/NBR). Fire: hot SWIR (B11/B12), a
-    burn-scar blob with depressed NBR/NDVI and elevated BAI.
+    No-fire: vegetated (high NIR/B8, high NDVI/NBR), with occasional **bright-soil /
+    cloud confounders** (high red+SWIR but NIR not depressed) that look fire-like and
+    make the task non-trivial. Fire: hot SWIR (B11/B12) with depressed NIR/NBR, at a
+    **variable strength** (some subtle) so the detector can't rely on a single cue.
     """
-    x = rng.normal(0.2, 0.05, size=(n, c, size, size)).astype(np.float32)
+    x = rng.normal(0.2, 0.10, size=(n, c, size, size)).astype(np.float32)  # heavier noise
 
-    # Baseline vegetated reflectance per band index.
+    # Baseline vegetated reflectance per band, varied per patch (scene-to-scene drift).
     base = np.array([0.10, 0.12, 0.13, 0.45, 0.22, 0.14] + [0.0] * (c - 6), dtype=np.float32)
     x += base[None, :, None, None]
+    nb = min(6, c)
+    x[:, :nb] += rng.normal(0, 0.04, size=(n, nb, 1, 1)).astype(np.float32)  # scene drift
 
     # Smooth spatial texture via a low-freq gradient.
     yy, xx = np.mgrid[0:size, 0:size] / size
     grad = (0.05 * np.sin(3 * np.pi * xx) * np.cos(3 * np.pi * yy)).astype(np.float32)
     x += grad[None, None, :, :]
 
+    def _blob_mask(cy, cx, r):
+        return ((yy * size - cy) ** 2 + (xx * size - cx) ** 2) <= r ** 2
+
     if fire:
-        # A burn blob centered randomly in each patch.
+        # Burn blob of variable strength (some subtle) -> realistic class overlap.
         cy = rng.integers(size // 4, 3 * size // 4, n)
         cx = rng.integers(size // 4, 3 * size // 4, n)
-        r = rng.uniform(size * 0.12, size * 0.30, n)
+        r = rng.uniform(size * 0.10, size * 0.28, n)
+        strength = rng.uniform(0.30, 1.0, n)
         for i in range(n):
-            d2 = (yy - cy[i]) ** 2 + (xx * size - cx[i]) ** 2  # noqa: F841
-            mask = ((yy * size - cy[i]) ** 2 + (xx * size - cx[i]) ** 2) <= r[i] ** 2
-            # Hot SWIR (B11=idx4, B12=idx5) up; NIR(idx3) down inside burn.
-            x[i, 4][mask] += rng.uniform(0.20, 0.45)
-            x[i, 5][mask] += rng.uniform(0.25, 0.55)
-            x[i, 3][mask] -= rng.uniform(0.15, 0.30)
-            x[i, 2][mask] += rng.uniform(0.05, 0.15)  # red up
+            mask = _blob_mask(cy[i], cx[i], r[i])
+            s = strength[i]
+            x[i, 4][mask] += s * rng.uniform(0.08, 0.22)   # SWIR1 up
+            x[i, 5][mask] += s * rng.uniform(0.10, 0.28)   # SWIR2 up
+            x[i, 3][mask] -= s * rng.uniform(0.05, 0.16)   # NIR down
+            x[i, 2][mask] += s * rng.uniform(0.02, 0.08)   # red up
+    else:
+        # ~22% of no-fire patches carry a bright soil / cloud blob (SWIR & red up, but
+        # NIR NOT depressed) — a deliberate confounder so PR-AUC isn't a free 1.0.
+        conf = np.flatnonzero(rng.uniform(size=n) < 0.22)
+        for i in conf:
+            cy = rng.integers(size // 4, 3 * size // 4)
+            cx = rng.integers(size // 4, 3 * size // 4)
+            mask = _blob_mask(cy, cx, rng.uniform(size * 0.12, size * 0.30))
+            x[i, 4][mask] += rng.uniform(0.06, 0.16)
+            x[i, 5][mask] += rng.uniform(0.06, 0.16)
+            x[i, 2][mask] += rng.uniform(0.05, 0.14)
+            x[i, 3][mask] += rng.uniform(0.00, 0.10)  # NIR stays high (key difference)
 
     x = np.clip(x, 0.0, 1.5)
 

@@ -18,17 +18,15 @@ import pandas as pd
 
 from wildfire.config import Config, load_config
 
-# Drivers averaged per region-season as count-model predictors.
+# Drivers averaged per region-season as count-model predictors. Kept deliberately
+# lean: ecoregions are few, so a compact, decorrelated set keeps the GLM stable.
 _AGG_FEATURES = [
-    "vpd", "erc", "bi", "pdsi", "tmax", "rmin", "wind", "precip",
-    "days_since_rain", "ndvi", "fuel_load", "elevation",
-    "human_proxy", "lightning_density",
-    "hist_fire_density",
+    "vpd", "erc", "pdsi", "fuel_load", "lightning_density",
 ]
 
 
 def build_region_season(
-    cfg: Config | None = None, features: pd.DataFrame | None = None, region_col: str = "block_id"
+    cfg: Config | None = None, features: pd.DataFrame | None = None, region_col: str | None = None
 ) -> pd.DataFrame:
     """Region × fire-season-year table for the count model."""
     cfg = cfg or load_config()
@@ -36,6 +34,10 @@ def build_region_season(
         from wildfire.features.build import build_feature_matrix
 
         features = build_feature_matrix(cfg)
+
+    # Default region unit: ecoregion when available, else the H3 spatial block.
+    if region_col is None:
+        region_col = "ecoregion" if "ecoregion" in features.columns else "block_id"
 
     df = features.copy()
     df["year"] = pd.to_datetime(df["date"]).dt.year

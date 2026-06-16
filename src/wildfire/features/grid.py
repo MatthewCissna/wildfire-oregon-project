@@ -103,6 +103,11 @@ def build_grid(cfg: Config | None = None, boundary: gpd.GeoDataFrame | None = No
     else:
         raise ValueError(f"Unknown grid.kind: {kind!r}")
     grid = grid.sort_values("cell_id").reset_index(drop=True)
+
+    # Attach Oregon ecoregions (the natural region unit + a realistic driver).
+    from wildfire.ingest.ecoregions import assign_oregon_ecoregions
+
+    grid = assign_oregon_ecoregions(grid)
     return grid
 
 

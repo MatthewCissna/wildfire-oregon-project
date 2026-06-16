@@ -35,8 +35,9 @@ def main() -> int:
         from wildfire.ingest.datasets import load_canonical
 
         grid = load_canonical(cfg)["grid"]
-        region_geom = grid.dissolve("block_id").reset_index()[["block_id", "geometry"]]
-        region_geom = region_geom.rename(columns={"block_id": "region"})
+        region_unit = "ecoregion" if "ecoregion" in grid.columns else "block_id"
+        region_geom = grid.dissolve(region_unit).reset_index()[[region_unit, "geometry"]]
+        region_geom = region_geom.rename(columns={region_unit: "region"})
 
         df = pd.read_parquet(cfg.path_for("data_processed") / "features.parquet")
         df["date"] = pd.to_datetime(df["date"])

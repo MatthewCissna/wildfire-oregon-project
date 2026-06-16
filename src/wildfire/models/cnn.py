@@ -125,7 +125,9 @@ def train_cnn(cfg: Config | None = None, data: dict | None = None, *, quick: boo
 
     PatchDataset = _make_dataset_class()
     bs = int(cfg.get("cnn.batch_size", 64))
-    nw = 0 if quick else int(cfg.get("cnn.num_workers", 4))
+    # Patches live in memory and the Dataset is a local class -> keep workers at 0
+    # (avoids Windows spawn re-imports and pickling the closure-defined Dataset).
+    nw = 0
     loaders = {}
     for split in ("train", "val", "test"):
         ds = PatchDataset(X[idx[split]], y[idx[split]], mean, std, augment=(split == "train"))

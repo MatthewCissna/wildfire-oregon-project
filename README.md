@@ -85,11 +85,22 @@ Each stage is an idempotent script under [`scripts/`](scripts/). They read
 | 3 | Extract image patches (CNN) | `scripts/03_patches.py` | `data/patches/` |
 | 4 | Train risk + count models | `scripts/04_train_tabular.py` | `outputs/models/` |
 | 5 | Train detection CNN | `scripts/05_train_cnn.py` | `outputs/models/cnn/` |
-| 6 | Evaluate (spatial CV, SHAP) | `scripts/06_evaluate.py` | `outputs/metrics/` |
+| 6 | Evaluate → RESULTS.md | `scripts/06_evaluate.py` | `RESULTS.md`, `outputs/metrics/` |
 | 7 | Visualize (maps) | `scripts/07_visualize.py` | `outputs/maps/`, `outputs/figures/` |
+| 8 | (optional) Optuna tuning | `scripts/08_tune.py` | `outputs/models/*_best_params.json` |
 
 Add `--synthetic` to any stage to use the offline fallback. The orchestrator
 `scripts/run_pipeline.py` chains them (`--quick` uses a small sample / few epochs).
+
+**Hyperparameter tuning (optional).** `uv run python scripts/08_tune.py --target risk`
+runs an Optuna study that optimizes **spatial-block CV PR-AUC** (not a leaky random
+split) and saves the best params; the next `04_train_tabular.py` run picks them up
+automatically. Add `--target cnn` to tune the detector (needs the `cnn` extra).
+
+**Notebooks.** `notebooks/01–04` walk through the project with plots — data
+exploration & ecoregions, features & class imbalance, modeling & honest validation
+(incl. the climatology-collapse demo and SHAP), and the maps + CNN. Launch with
+`uv run jupyter lab`.
 
 ---
 

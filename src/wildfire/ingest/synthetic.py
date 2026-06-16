@@ -43,6 +43,30 @@ _COEFFS = {
     "ndvi_anom": -0.30,     # greener than normal (wetter) -> less fire
 }
 
+# Per-ecoregion climate / fuel / ignition character (multipliers & offsets).
+# Encodes Oregon's west-wet / east-dry gradient, valley human ignitions, and
+# Cascade/Blue-Mountain lightning — so the synthetic demo has real spatial structure.
+#   precip: precipitation multiplier   temp: summer temp offset (°C)
+#   fuel: base fuel load (0-1)         lightning: lightning multiplier
+#   human: human-ignition multiplier   lc: dominant land-cover label
+ECO_PARAMS = {
+    "Coast Range":              dict(precip=1.7, temp=-1.0, fuel=0.80, lightning=0.3, human=0.7, lc="forest_wet"),
+    "Klamath Mountains":        dict(precip=0.9, temp=0.5,  fuel=0.85, lightning=0.9, human=0.6, lc="forest_conifer"),
+    "Willamette Valley":        dict(precip=1.2, temp=1.0,  fuel=0.35, lightning=0.3, human=1.4, lc="grass_ag"),
+    "West Cascades":            dict(precip=1.5, temp=-2.0, fuel=0.95, lightning=0.7, human=0.4, lc="forest_conifer"),
+    "East Cascades":            dict(precip=0.7, temp=-1.0, fuel=0.85, lightning=1.2, human=0.5, lc="forest_conifer"),
+    "Columbia Plateau":         dict(precip=0.5, temp=1.5,  fuel=0.35, lightning=0.8, human=1.0, lc="grass_ag"),
+    "Blue Mountains":           dict(precip=0.7, temp=-1.0, fuel=0.80, lightning=1.3, human=0.5, lc="forest_conifer"),
+    "Northern Basin and Range": dict(precip=0.4, temp=1.5,  fuel=0.45, lightning=1.0, human=0.4, lc="shrub_steppe"),
+}
+_ECO_DEFAULT = dict(precip=0.8, temp=0.0, fuel=0.55, lightning=1.0, human=0.7, lc="shrub_steppe")
+
+
+def _eco_arr(grid, key: str):
+    import numpy as np
+
+    return np.array([ECO_PARAMS.get(e, _ECO_DEFAULT)[key] for e in grid["ecoregion"]])
+
 
 @dataclass
 class SyntheticSpec:
@@ -83,24 +107,16 @@ def _static_features(grid, rng: np.random.Generator) -> pd.DataFrame:
     slope = np.clip(2 + 0.012 * elevation + rng.normal(0, 3, n), 0, 45)
     aspect = rng.uniform(0, 360, n)
 
-    # Land cover bands: wet west forest, Cascade forest, dry east shrub/grass, valleys ag.
-    west_forest = lon < -123.0
-    east_dry = lon > -120.5
-    landcover = np.where(
-        west_forest, "forest_wet",
-        np.where(elevation > 900, "forest_conifer",
-                 np.where(east_dry, "shrub_steppe", "grass_ag")),
-    )
-    fuel_base = {
-        "forest_wet": 0.75, "forest_conifer": 0.95,
-        "shrub_steppe": 0.45, "grass_ag": 0.30,
-    }
-    fuel_load = np.array([fuel_base[c] for c in landcover]) + rng.normal(0, 0.05, n)
-    fuel_load = np.clip(fuel_load, 0.05, 1.0)
+    # Land cover & fuel from ecoregion character.
+    landcover = _eco_arr(grid, "lc")
+    fuel_load = np.clip(_eco_arr(grid, "fuel").astype(float) + rng.normal(0, 0.05, n), 0.05, 1.0)
+    eco_human = _eco_arr(grid, "human").astype(float)
 
-    # Human-ignition proxies: a few "town" centers; distance falls off from them.
-    n_towns = max(3, n // 400)
-    town_idx = rng.choice(n, size=n_towns, replace=False)
+    # Human-ignition proxies: town centers weighted toward human-heavy ecoregions
+    # (valleys/plateau); distance to nearest falls off, then modulated by ecoregion.
+    n_towns = max(4, n // 400)
+    town_p = eco_human / eco_human.sum()
+    town_idx = rng.choice(n, size=n_towns, replace=False, p=town_p)
     tlon, tlat = lon[town_idx], lat[town_idx]
     dist_road = np.full(n, 1e9)
     for j in range(n_towns):
@@ -108,11 +124,12 @@ def _static_features(grid, rng: np.random.Generator) -> pd.DataFrame:
         dist_road = np.minimum(dist_road, d)
     dist_road = dist_road + np.abs(rng.normal(0, 1.5, n))
     dist_power = dist_road * rng.uniform(0.8, 1.6, n) + np.abs(rng.normal(0, 2, n))
-    human_proxy = np.exp(-dist_road / 25.0)  # 0..1, high near roads
+    human_proxy = np.clip(np.exp(-dist_road / 25.0) * eco_human, 0, 1.5)  # high near roads in WUI
 
     return pd.DataFrame(
         {
             "cell_id": grid["cell_id"].to_numpy(),
+            "ecoregion": grid["ecoregion"].to_numpy(),
             "elevation": elevation,
             "slope": slope,
             "aspect": aspect,
@@ -137,9 +154,14 @@ def _weather_and_labels(
     cell_ids = grid["cell_id"].to_numpy()
     n = len(grid)
 
+    # Ecoregion climate character (static per cell).
+    precip_mult = _eco_arr(grid, "precip").astype(float)
+    temp_offset = _eco_arr(grid, "temp").astype(float)
+    lightning_mult = _eco_arr(grid, "lightning").astype(float)
+
     # Per-cell slowly varying drought state (AR(1) across the season), drier in the east.
     east = _zscore(lon)  # higher = east = drier
-    drought_state = -0.6 * east + rng.normal(0, 0.5, n)
+    drought_state = -0.6 * east - 0.4 * _zscore(precip_mult) + rng.normal(0, 0.5, n)
     dsr = np.zeros(n)  # days since rain accumulator
 
     panel_rows = []
@@ -149,11 +171,10 @@ def _weather_and_labels(
         doy = t.dayofyear
         season = np.sin((doy - 200) / 365.0 * 2 * np.pi)  # peak dryness ~ mid-July
 
-        tmax = 22 + 9 * season - 0.0055 * elev + 3 * np.sin(lat) + rng.normal(0, 2.5, n)
-        # Precip: wet winters, dry summers, west wetter than east.
-        wet_west = np.clip(-east, -2, 2)
+        tmax = 22 + 9 * season - 0.0055 * elev + temp_offset + rng.normal(0, 2.5, n)
+        # Precip: wet winters, dry summers, scaled by the ecoregion precip multiplier.
         precip = np.clip(
-            np.maximum(0, (1.2 - season) * rng.gamma(1.2, 2.0, n) * (0.6 + 0.5 * (wet_west + 2) / 4)),
+            np.maximum(0, (1.2 - season) * rng.gamma(1.2, 2.0, n) * precip_mult),
             0, None,
         )
         rmin = np.clip(70 - 18 * season - 0.6 * tmax + 2.0 * precip + rng.normal(0, 6, n), 5, 100)
@@ -178,8 +199,10 @@ def _weather_and_labels(
         ndvi = np.clip(0.55 + 0.18 * fuel - 0.20 * season + 0.05 * (precip > 2) + rng.normal(0, 0.04, n), 0, 1)
         ndvi_anom = ndvi - (0.55 + 0.18 * fuel)
 
-        # Lightning density field (sparse, convective; more inland/east in summer).
-        lightning = np.clip(rng.gamma(0.4, 1.0, n) * (0.5 + 0.5 * season) * (0.5 + east.clip(0) ), 0, None)
+        # Lightning density field (sparse, convective; scaled by ecoregion character).
+        lightning = np.clip(
+            rng.gamma(0.4, 1.0, n) * (0.5 + 0.5 * season) * lightning_mult, 0, None
+        )
         lightning_n = _zscore(np.log1p(lightning))
 
         wind_x_dry = _zscore(wind) * _zscore(vpd)
@@ -277,6 +300,6 @@ def generate(cfg: Config | None = None, *, quick: bool = False) -> dict:
     static = _static_features(grid, rng)
     panel, events = _weather_and_labels(grid, static, spec.dates, rng)
 
-    # Attach static features to the grid for convenience.
-    grid = grid.merge(static, on="cell_id", how="left")
+    # Attach static features to the grid (grid already carries ecoregion).
+    grid = grid.merge(static.drop(columns=["ecoregion"]), on="cell_id", how="left")
     return {"grid": grid, "static": static, "weather_panel": panel, "fire_events": events}
