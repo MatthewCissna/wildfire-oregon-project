@@ -1,0 +1,120 @@
+# =====================================================================
+# Oregon Wildfire ML System — central configuration
+# =====================================================================
+# Edit this file (or override values via environment variables / .env)
+# instead of hardcoding anything in the source. Every stage of the
+# pipeline reads from here.
+
+project:
+  name: wildfire-oregon
+  random_seed: 42
+
+# ---------------------------------------------------------------------
+# Google Earth Engine
+# ---------------------------------------------------------------------
+# Your Cloud project ID goes here AFTER you complete docs/earth_engine_setup.md.
+# It can also be supplied via the EE_PROJECT environment variable (which wins).
+# Leave as null to run the pipeline on the synthetic-data fallback.
+earth_engine:
+  project_id: null              # e.g. "ee-yourname-wildfire"  (or set $EE_PROJECT)
+  # High-volume export endpoint is used automatically for large pulls.
+  use_highvolume: true
+
+# ---------------------------------------------------------------------
+# Study area & time range
+# ---------------------------------------------------------------------
+region:
+  name: Oregon
+  # FIPS state code for Oregon = 41 (used to pull the boundary from TIGER/Census).
+  state_fips: "41"
+  # Fallback bounding box (lon/lat) if boundary fetch is unavailable.
+  bbox: [-124.6, 41.9, -116.4, 46.3]
+  crs_geographic: "EPSG:4326"
+  crs_projected: "EPSG:5070"    # CONUS Albers Equal Area — good for area/distance in OR
+
+time:
+  start: "2001-01-01"
+  end: "2024-12-31"
+  # Temporal resolution for the tabular risk/count features.
+  step: "weekly"                # one of: daily | weekly | monthly
+  # Fire "season" months used by the per-region count model.
+  fire_season_months: [5, 6, 7, 8, 9, 10]
+
+# ---------------------------------------------------------------------
+# Spatial grid for the risk model
+# ---------------------------------------------------------------------
+grid:
+  kind: "h3"                    # one of: h3 | square_km
+  h3_resolution: 6              # res 6 ≈ 36 km² hexes (~3.2 km edge); good OR-wide balance
+  square_km: 5.0                # used only if kind == square_km
+
+# ---------------------------------------------------------------------
+# Earth Engine dataset IDs (documented in docs/data_sources.md)
+# ---------------------------------------------------------------------
+datasets:
+  burned_area: "MODIS/061/MCD64A1"
+  thermal: "MODIS/061/MOD14A1"
+  firms: "FIRMS"
+  s2_sr: "COPERNICUS/S2_SR_HARMONIZED"
+  landsat8: "LANDSAT/LC08/C02/T1_L2"
+  landsat9: "LANDSAT/LC09/C02/T1_L2"
+  modis_ndvi: "MODIS/061/MOD13A1"
+  landcover: "ESA/WorldCover/v200"
+  elevation: "USGS/SRTMGL1_003"
+  gridmet: "IDAHO_EPSCOR/GRIDMET"
+  gridmet_drought: "GRIDMET/DROUGHT"
+
+# ---------------------------------------------------------------------
+# Imagery / patch extraction for the detection CNN
+# ---------------------------------------------------------------------
+patches:
+  source: "s2_sr"               # s2_sr | landsat8
+  size_px: 64                   # patch edge in pixels
+  scale_m: 20                   # meters per pixel (S2: 10/20; we resample to 20)
+  bands: ["B2", "B3", "B4", "B8", "B11", "B12"]  # blue,green,red,NIR,SWIR1,SWIR2
+  max_cloud_pct: 40
+  # Indices computed and stacked as extra channels.
+  indices: ["NDVI", "NBR", "NDMI", "BAI"]
+  pos_per_year: 1500            # positive (fire) patches sampled per year
+  neg_per_pos: 2.0              # negatives per positive (imbalance ratio)
+
+# ---------------------------------------------------------------------
+# Modeling / validation
+# ---------------------------------------------------------------------
+modeling:
+  # Cross-validation strategy for the tabular models. Random splits LEAK in
+  # spatiotemporal data — these are the honest alternatives.
+  cv:
+    spatial_blocks: "ecoregion"   # leave-one-region-out blocking variable
+    temporal: "forward_chaining"  # expanding-window time CV
+    n_time_folds: 5
+  imbalance:
+    strategy: "undersample_negatives"   # undersample | class_weight | smote
+    neg_per_pos: 5.0
+  metrics_primary: ["pr_auc", "brier", "recall_at_p20"]
+
+cnn:
+  backbone: "efficientnet_b0"   # timm name; resnet50 also supported
+  pretrained: true
+  img_size: 64
+  batch_size: 64
+  epochs: 25
+  lr: 0.0003
+  weight_decay: 0.0001
+  num_workers: 4
+  spatial_block_split: true     # split train/val/test by spatial blocks (no leakage)
+  device: "auto"                # auto -> cuda if available else cpu
+
+# ---------------------------------------------------------------------
+# Paths (relative to repo root)
+# ---------------------------------------------------------------------
+paths:
+  data_raw: "data/raw"
+  data_interim: "data/interim"
+  data_processed: "data/processed"
+  patches: "data/patches"
+  outputs: "outputs"
+  maps: "outputs/maps"
+  models: "outputs/models"
+  metrics: "outputs/metrics"
+  figures: "outputs/figures"
