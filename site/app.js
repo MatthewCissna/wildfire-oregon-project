@@ -5,8 +5,7 @@
   const SURF = META.surfaces;
   const $ = (s, r) => (r || document).querySelector(s);
   const fmt = (v, n = 2) => (v == null || isNaN(v)) ? "—" : (+v).toFixed(n);
-  const BASE_NOLBL = "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png";
-  const BASE_LBL = "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png";
+  const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 
   function rampFromStops(stops, t) {
     t = Math.max(0, Math.min(1, t));
@@ -23,10 +22,19 @@
     document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
     document.querySelectorAll(".tab").forEach(s => s.classList.toggle("active", s.id === name));
     if (name === "map") { initMap(); if (map) setTimeout(() => map.invalidateSize(), 60); }
+    if (name === "forecast") { initForecast(); if (fcMap) setTimeout(() => fcMap.invalidateSize(), 60); }
+    if (name === "tracker") { buildTracker(); }
     if (name === "results") { initDistMap(); if (dmap) setTimeout(() => dmap.invalidateSize(), 60); }
   }
 
-  /* ---------- overview ---------- */
+  /* ---------- nearest cell (only on click — no mousemove) ---------- */
+  function nearest(lat, lng) {
+    let best = null, bd = Infinity;
+    for (let i = 0; i < CELLS.length; i++) { const c = CELLS[i], dx = c.lon - lng, dy = c.lat - lat, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = c; } }
+    return best;
+  }
+
+  /* ---------- bars + small year chart ---------- */
   function barsHTML(items) {
     const max = Math.max(...items.map(i => i.v)) || 1;
     return `<div class="bars">` + items.map(i =>
@@ -34,7 +42,7 @@
        <div class="track"><div class="fill" style="width:${(i.v / max * 100).toFixed(1)}%"></div></div>
        <div class="val">${i.v.toFixed(3)}</div></div>`).join("") + `</div>`;
   }
-  function yearChart(values, w, h) {
+  function yearChart(values, w, h, labels) {
     const pad = { l: 30, r: 8, t: 8, b: 20 }, iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
     const max = Math.max(...values, 1), bw = iw / values.length;
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -45,11 +53,15 @@
                <text x="${pad.l - 5}" y="${y + 3}" fill="#6b7785" font-size="9" text-anchor="end">${Math.round(max * g)}</text>`; });
     values.forEach((v, i) => {
       const bh = (v / max) * ih, x = pad.l + i * bw, y = pad.t + ih - bh;
-      html += `<rect x="${x + 1}" y="${y}" width="${bw - 2}" height="${bh}" fill="${rampFromStops(RISK_STOPS, v / max)}" rx="1"><title>${YEARS[i]}: ${v}</title></rect>`;
-      if (i % 3 === 0) html += `<text x="${x + bw / 2}" y="${h - 6}" fill="#6b7785" font-size="9" text-anchor="middle">${String(YEARS[i]).slice(2)}</text>`;
+      const lbl = labels ? labels[i] : YEARS[i];
+      html += `<rect x="${x + 1}" y="${y}" width="${bw - 2}" height="${bh}" fill="${rampFromStops(RISK_STOPS, v / max)}" rx="1"><title>${lbl}: ${v}</title></rect>`;
+      const step = labels ? 4 : 3;
+      if (i % step === 0) html += `<text x="${x + bw / 2}" y="${h - 6}" fill="#6b7785" font-size="9" text-anchor="middle">${String(lbl).slice(labels ? 5 : 2)}</text>`;
     });
     svg.innerHTML = html; return svg;
   }
+
+  /* ---------- overview ---------- */
   function buildOverview() {
     $("#ov-rows").textContent = (META.manifest.n_panel_rows || 0).toLocaleString();
     const sb = (META.schemes.spatial_block || []).find(r => r.model === "risk_gbm") || {};
@@ -65,78 +77,75 @@
     $("#foot-meta").textContent = `source: ${META.manifest.source} · ${(META.manifest.positive_rate * 100).toFixed(2)}% positive`;
   }
 
-  /* ---------- nearest cell ---------- */
-  function nearest(lat, lng) {
-    let best = null, bd = Infinity;
-    for (let i = 0; i < CELLS.length; i++) { const c = CELLS[i], dx = c.lon - lng, dy = c.lat - lat, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = c; } }
-    return best;
-  }
-  let last = 0;
-  function throttle(fn, ms) { return (...a) => { const t = Date.now(); if (t - last > ms) { last = t; fn(...a); } }; }
-
-  /* ---------- map ---------- */
-  let map, overlay, marker, distOutline, ecoOutline, state = { metric: "risk" };
+  /* ---------- risk map (simplified, click-only) ---------- */
+  let map, overlay, cityLayer, distOutline, marker, state = { metric: "risk" };
   function initMap() {
     if (map) return;
-    if (typeof L === "undefined") { $("#leaflet").innerHTML = '<div style="padding:30px;color:#9aa7b4">Map library loading… needs internet for Leaflet &amp; basemap tiles. Other tabs work offline.</div>'; return; }
+    if (typeof L === "undefined") {
+      $("#leaflet").innerHTML = '<div style="padding:30px;color:#9aa7b4">Map library loading… needs internet for Leaflet &amp; tiles.</div>';
+      return;
+    }
     map = L.map("leaflet", { preferCanvas: true, minZoom: 5, maxZoom: 11, zoomControl: true }).setView([44.0, -120.5], 6.4);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-      { subdomains: "abcd", attribution: "© OpenStreetMap © CARTO" }).addTo(map);
+    L.tileLayer(DARK_TILES, { subdomains: "abcd", attribution: "© OpenStreetMap © CARTO" }).addTo(map);
 
     const sel = $("#metric");
     sel.innerHTML = Object.entries(SURF.metrics).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join("");
     setSurface("risk");
     sel.addEventListener("change", e => setSurface(e.target.value));
-    $("#opacity").addEventListener("input", e => overlay && overlay.setOpacity(e.target.value / 100));
+    $("#citiesToggle").addEventListener("change", e => toggleCities(e.target.checked));
     $("#distToggle").addEventListener("change", e => toggleDistricts(e.target.checked));
-    $("#ecoToggle").addEventListener("change", e => toggleEco(e.target.checked));
 
-    map.on("mousemove", throttle(e => probe(e), 55));
-    map.on("mouseout", () => $("#hovertip").hidden = true);
+    toggleCities(true);
+    // Click anywhere on the map: snap to nearest cell, populate detail. No mousemove (zero lag).
     map.on("click", e => { const c = nearest(e.latlng.lat, e.latlng.lng); selectCell(c); });
   }
   function setSurface(metric) {
     state.metric = metric; const m = SURF.metrics[metric];
     if (overlay) map.removeLayer(overlay);
-    overlay = L.imageOverlay(m.png, SURF.bounds, { opacity: $("#opacity").value / 100, interactive: false }).addTo(map);
-    overlay.bringToFront();
+    overlay = L.imageOverlay(m.png, SURF.bounds, { opacity: 0.85, interactive: false }).addTo(map);
+    if (cityLayer) cityLayer.eachLayer(l => l.bringToFront && l.bringToFront());
     if (distOutline) distOutline.bringToFront();
-    drawLegend(m);
+    drawLegend(m, "#legend");
   }
-  function drawLegend(m) {
+  function drawLegend(m, sel) {
     const grad = `linear-gradient(90deg,${m.stops.join(",")})`;
-    $("#legend").innerHTML = `<div>${m.label}${m.unit ? " (" + m.unit + ")" : ""}</div>
+    $(sel).innerHTML = `<div>${m.label}${m.unit ? " (" + m.unit + ")" : ""}</div>
       <div class="bar" style="background:${grad}"></div>
       <div class="ends"><span>${fmt(m.domain[0], 1)}</span><span>${fmt(m.domain[1], 1)}</span></div>`;
   }
-  function probe(e) {
-    const c = nearest(e.latlng.lat, e.latlng.lng); if (!c) return;
-    const tip = $("#hovertip"); tip.hidden = false;
-    tip.innerHTML = `<b>${c.eco}</b><div class="kv2"><span>Risk</span><span>${fmt(c.risk * 100, 2)}%</span>
-      <span>Fire rate</span><span>${fmt(c.fires_rate, 2)}%</span><span>Elevation</span><span>${fmt(c.elev, 0)} m</span>
-      <span>NDVI</span><span>${fmt(c.ndvi, 2)}</span></div><div class="tiphint">click for full detail</div>`;
-    const wrap = $(".mapwrap").getBoundingClientRect();
-    let x = e.originalEvent.clientX - wrap.left + 14, y = e.originalEvent.clientY - wrap.top + 14;
-    if (x > wrap.width - 190) x -= 200; if (y > wrap.height - 150) y -= 150;
-    tip.style.left = x + "px"; tip.style.top = y + "px";
+  function toggleCities(on) {
+    if (on) {
+      if (cityLayer) return;
+      cityLayer = L.layerGroup();
+      META.cities.forEach(ct => {
+        const r = ct.pop > 100000 ? 7 : ct.pop > 25000 ? 5 : 3.5;
+        const mk = L.circleMarker([ct.lat, ct.lon], {
+          radius: r, color: "#ffffff", weight: 1.5, fillColor: "#ffe3b3", fillOpacity: 0.95,
+        }).bindTooltip(ct.name, { direction: "top", offset: [0, -4], permanent: ct.pop > 80000, className: "citytip" });
+        mk.on("click", e => { L.DomEvent.stopPropagation(e); selectCity(ct); });
+        cityLayer.addLayer(mk);
+      });
+      cityLayer.addTo(map);
+    } else if (cityLayer) { map.removeLayer(cityLayer); cityLayer = null; }
+  }
+  function toggleDistricts(on) {
+    if (on && META.districts_geo) {
+      distOutline = L.geoJSON(META.districts_geo, {
+        style: { color: "#ffe3b3", weight: 1.3, fill: false, opacity: 0.85 },
+        onEachFeature: (f, l) => l.bindTooltip(f.properties.district, { sticky: true, className: "citytip" })
+      }).addTo(map);
+    } else if (distOutline) { map.removeLayer(distOutline); distOutline = null; }
+  }
+  function selectCity(ct) {
+    const c = nearest(ct.lat, ct.lon); if (!c) return;
+    selectCell({ ...c, _city: ct.name });
+    map.setView([ct.lat, ct.lon], Math.max(map.getZoom(), 7));
   }
   function selectCell(c) {
     if (!c) return;
     if (marker) map.removeLayer(marker);
-    marker = L.circleMarker([c.lat, c.lon], { radius: 9, color: "#fff", weight: 2, fillColor: "#ff7a18", fillOpacity: .9, className: "pulse" }).addTo(map);
+    marker = L.circleMarker([c.lat, c.lon], { radius: 9, color: "#fff", weight: 2, fillColor: "#ff7a18", fillOpacity: .9 }).addTo(map);
     showDetail(c);
-  }
-  function toggleDistricts(on) {
-    if (on && META.districts_geo) {
-      distOutline = L.geoJSON(META.districts_geo, { style: { color: "#ffe3b3", weight: 1.3, fill: false, opacity: .85 },
-        onEachFeature: (f, l) => l.bindTooltip(f.properties.district, { sticky: true, className: "lbltip" }) }).addTo(map);
-    } else if (distOutline) { map.removeLayer(distOutline); distOutline = null; }
-  }
-  function toggleEco(on) {
-    if (on && META.ecoregions_geo) {
-      ecoOutline = L.geoJSON(META.ecoregions_geo, { style: { color: "#7fd1ff", weight: 1, fill: false, opacity: .7, dashArray: "4 3" },
-        onEachFeature: (f, l) => l.bindTooltip(f.properties.ecoregion, { sticky: true, className: "lbltip" }) }).addTo(map);
-    } else if (ecoOutline) { map.removeLayer(ecoOutline); ecoOutline = null; }
   }
 
   /* ---------- detail panel ---------- */
@@ -146,16 +155,147 @@
     const climate = [["Max temp", fmt(p.tmax, 1) + " °C"], ["Min RH", fmt(p.rmin, 0) + " %"], ["VPD", fmt(p.vpd, 2) + " kPa"],
       ["Wind", fmt(p.wind, 1) + " m/s"], ["Precip", fmt(p.precip, 1) + " mm"], ["ERC", fmt(p.erc, 0)],
       ["Burning index", fmt(p.bi, 0)], ["PDSI (drought)", fmt(p.pdsi, 2)], ["NDVI", fmt(p.ndvi, 2)], ["Days since rain", fmt(p.days_since_rain, 0)]];
+    const headTitle = p._city ? p._city : (p.near_city || "Cell " + p.id.slice(0, 8) + "…");
+    const subTitle = p._city ? `Nearest grid cell · ${p.eco}` : `${p.eco} · ${p.near_km} km from ${p.near_city}`;
     const d = $("#detail");
-    d.innerHTML = `<h3>Cell ${p.id.slice(0, 8)}…</h3><span class="eco-pill">${p.eco}</span>
+    d.innerHTML = `<h3>${headTitle}</h3><div class="muted small" style="margin-bottom:8px">${subTitle}</div>
       <h4>Modeled wildfire risk</h4>
       <div class="kv"><div class="k">Risk (calibrated)</div><div class="v">${fmt(p.risk * 100, 2)}%</div>
         <div class="k">Statewide percentile</div><div class="v">${(p.risk_pct * 100).toFixed(0)}ᵗʰ</div></div>${gauge}
-      <h4>Location &amp; terrain</h4>${kv([["Latitude", fmt(p.lat, 3)], ["Longitude", fmt(p.lon, 3)], ["Elevation", fmt(p.elev, 0) + " m"], ["Slope", fmt(p.slope, 1) + "°"], ["Aspect", fmt(p.aspect, 0) + "°"]])}
+      <h4>Location</h4>${kv([["Nearest city", `${p.near_city} (${p.near_km} km)`], ["Latitude", fmt(p.lat, 3)], ["Longitude", fmt(p.lon, 3)], ["Elevation", fmt(p.elev, 0) + " m"], ["Slope", fmt(p.slope, 1) + "°"], ["Aspect", fmt(p.aspect, 0) + "°"]])}
       <h4>Land cover &amp; fuel</h4>${kv([["Land cover", p.landcover], ["Fuel load (0–1)", fmt(p.fuel, 2)]])}
       <h4>Climate normals (2001–2024 mean)</h4>${kv(climate)}
       <h4>Fire history</h4>${kv([["Burned cell-weeks", p.fires_total], ["Fire rate", fmt(p.fires_rate, 2) + " %"]])}<div id="cellyears"></div>`;
     $("#cellyears", d).appendChild(yearChart(p.fires_by_year, 340, 120));
+  }
+
+  /* ---------- forecast tab ---------- */
+  let fcMap, fcOverlay, fcWeekIdx = 0, fcCityLayer;
+  function initForecast() {
+    if (fcMap || !META.forecast) {
+      if (!META.forecast) $("#fc-headline").innerHTML = '<div class="panel">No forecast available — run scripts/build_site.py.</div>';
+      return;
+    }
+    const F = META.forecast;
+    $("#fc-year").textContent = F.target_year;
+    const nw = F.next_week;
+    $("#fc-headline").innerHTML = `
+      <div class="fc-card"><div class="big">${nw.label}</div><div class="lbl">Next forecast week</div></div>
+      <div class="fc-card"><div class="big">${Math.round(nw.expected_state)}</div><div class="lbl">Expected fires that week</div></div>
+      <div class="fc-card"><div class="big">${nw.max_risk.toFixed(2)}%</div><div class="lbl">Max single-cell risk</div></div>
+      <div class="fc-card"><div class="big">${F.n_weeks}</div><div class="lbl">Forecast weeks (May–Oct)</div></div>`;
+    $("#fc-slider").max = F.weeks.length - 1;
+
+    fcMap = L.map("fc-map", { preferCanvas: true, minZoom: 5, maxZoom: 10 }).setView([44, -120.5], 6.3);
+    L.tileLayer(DARK_TILES, { subdomains: "abcd" }).addTo(fcMap);
+    fcCityLayer = L.layerGroup();
+    META.cities.filter(c => c.pop > 50000).forEach(ct => {
+      L.circleMarker([ct.lat, ct.lon], { radius: 4, color: "#fff", weight: 1, fillColor: "#ffe3b3", fillOpacity: .9 })
+        .bindTooltip(ct.name, { direction: "top", offset: [0, -4], className: "citytip" }).addTo(fcCityLayer);
+    });
+    fcCityLayer.addTo(fcMap);
+    setForecastWeek(0);
+
+    $("#fc-slider").addEventListener("input", e => setForecastWeek(+e.target.value));
+    $("#fc-prev").addEventListener("click", () => setForecastWeek(Math.max(0, fcWeekIdx - 1)));
+    $("#fc-next").addEventListener("click", () => setForecastWeek(Math.min(F.weeks.length - 1, fcWeekIdx + 1)));
+
+    // Build the seasonal curve chart.
+    const curveVals = F.predicted.weekly_curve.map(w => Math.round(w.expected));
+    const labels = F.predicted.weekly_curve.map(w => w.date.slice(5));
+    $("#fc-curve").innerHTML = "";
+    $("#fc-curve").appendChild(yearChart(curveVals, 980, 180, labels));
+  }
+  function setForecastWeek(i) {
+    fcWeekIdx = i; const F = META.forecast, wk = F.weeks[i];
+    $("#fc-slider").value = i;
+    $("#fc-label").textContent = `${wk.label} 2025 · week ${i + 1} of ${F.weeks.length}`;
+    if (fcOverlay) fcMap.removeLayer(fcOverlay);
+    fcOverlay = L.imageOverlay(wk.png, SURF.bounds, { opacity: 0.9 }).addTo(fcMap);
+    if (fcCityLayer) fcCityLayer.eachLayer(l => l.bringToFront && l.bringToFront());
+    drawLegend({ label: "Risk", unit: "%", stops: RISK_STOPS, domain: [0, F.vmax_pct] }, "#fc-legend");
+    $("#fc-stats").innerHTML = `<div class="kv">
+      <div class="k">Expected statewide fires</div><div class="v">${Math.round(wk.expected_state)}</div>
+      <div class="k">Max single-cell risk</div><div class="v">${wk.max_risk.toFixed(2)}%</div>
+      <div class="k">Mean risk</div><div class="v">${wk.mean_risk.toFixed(3)}%</div></div>`;
+    const dists = Object.entries(wk.district_expected).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const max = dists[0] ? dists[0][1] : 1;
+    $("#fc-dists").innerHTML = `<div class="bars">` + dists.map(([n, v]) =>
+      `<div class="row"><div class="name" title="${n}">${n}</div>
+        <div class="track"><div class="fill" style="width:${(v / max * 100).toFixed(1)}%"></div></div>
+        <div class="val">${Math.round(v)}</div></div>`).join("") + `</div>`;
+  }
+
+  /* ---------- predictions tracker ---------- */
+  function buildTracker() {
+    const P = META.predictions;
+    if (!P) { $("#tr-status").innerHTML = '<div class="muted">No locked predictions yet — run scripts/build_site.py.</div>'; return; }
+    const A = P.actuals;
+    const status = A
+      ? `<div><span class="badge ok">verified</span> &nbsp;Actuals pulled ${A.verified_at_utc.slice(0, 10)} for ${A.target_year} (state actual: ${A.state_actual_fires} fires).</div>`
+      : `<div><span class="badge wait">awaiting actuals</span> &nbsp;Predictions locked at ${P.locked_at_utc.slice(0, 10)}. Run <code>uv run python scripts/verify_predictions.py</code> after the ${P.target_year} fire season to compare.</div>`;
+    $("#tr-status").innerHTML = status;
+
+    // ---- statewide ----
+    const sp = P.predicted.state_expected_fires, sa = A ? A.state_actual_fires : null;
+    const stateRow = `<table class="t"><tr><th>Metric</th><th>Predicted</th><th>Actual</th><th>Error</th></tr>
+      <tr><td>Total burned cell-weeks (${P.target_year} season)</td><td>${Math.round(sp)}</td><td>${sa != null ? sa : "—"}</td><td>${sa != null ? fmtErr(sp, sa) : "—"}</td></tr></table>`;
+    $("#tr-state").innerHTML = stateRow;
+
+    // ---- per district ----
+    const aMap = A && A.districts ? Object.fromEntries(A.districts.map(d => [d.district, d.actual_fires])) : {};
+    const drows = P.predicted.districts.map(d => {
+      const act = aMap[d.district];
+      return `<tr><td>${d.district}</td><td>${Math.round(d.expected_fires)}</td><td>${act != null ? act : "—"}</td><td>${act != null ? fmtErr(d.expected_fires, act) : "—"}</td></tr>`;
+    }).join("");
+    $("#tr-districts").innerHTML = `<table class="t"><tr><th>ODF District</th><th>Pred. fires</th><th>Actual</th><th>Error</th></tr>${drows}</table>`;
+
+    // ---- top cells ----
+    const cellAct = A && A.top_cells ? Object.fromEntries(A.top_cells.map(c => [c.id, c.actual_weeks_burned])) : {};
+    const crows = P.predicted.top_cells.map((c, i) => {
+      const act = cellAct[c.id];
+      const hit = act != null ? (act > 0 ? `<span class="badge ok">${act} weeks burned</span>` : `<span class="badge miss">no fire</span>`) : "—";
+      return `<tr><td>${i + 1}</td><td>${c.near_city} (${c.near_km} km)</td><td>${c.eco}</td><td>${c.pred_risk.toFixed(2)}%</td><td>${hit}</td></tr>`;
+    }).join("");
+    $("#tr-cells").innerHTML = `<table class="t"><tr><th>#</th><th>Nearest city</th><th>Ecoregion</th><th>Pred. risk</th><th>Actual</th></tr>${crows}</table>`;
+
+    // ---- weekly curve ----
+    $("#tr-curve").innerHTML = "";
+    const wk = P.predicted.weekly_curve;
+    const aw = A && A.weekly_curve ? Object.fromEntries(A.weekly_curve.map(w => [w.date, w.actual])) : {};
+    const pred = wk.map(w => Math.round(w.expected));
+    const labels = wk.map(w => w.date.slice(5));
+    const actual = A ? wk.map(w => aw[w.date] != null ? aw[w.date] : 0) : null;
+    $("#tr-curve").appendChild(dualLineChart(labels, pred, actual, 980, 200));
+  }
+  function fmtErr(pred, act) {
+    const e = pred - act, pct = act === 0 ? "—" : `${(100 * e / act).toFixed(0)}%`;
+    const cls = Math.abs(e) <= Math.max(2, act * 0.2) ? "ok" : "miss";
+    return `<span class="badge ${cls}">${e >= 0 ? "+" : ""}${Math.round(e)}${pct !== "—" ? " (" + pct + ")" : ""}</span>`;
+  }
+  function dualLineChart(labels, pred, actual, w, h) {
+    const pad = { l: 36, r: 8, t: 12, b: 22 }, iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+    const series = actual ? pred.concat(actual) : pred;
+    const max = Math.max(...series, 1);
+    const sx = i => pad.l + (i / Math.max(1, labels.length - 1)) * iw;
+    const sy = v => pad.t + ih - (v / max) * ih;
+    const path = arr => arr.map((v, i) => `${i ? "L" : "M"}${sx(i)},${sy(v)}`).join("");
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("width", "100%");
+    let html = "";
+    [0, .5, 1].forEach(g => { const y = pad.t + ih * (1 - g);
+      html += `<line x1="${pad.l}" y1="${y}" x2="${w - pad.r}" y2="${y}" stroke="#2b3440"/>
+               <text x="${pad.l - 5}" y="${y + 3}" fill="#6b7785" font-size="10" text-anchor="end">${Math.round(max * g)}</text>`; });
+    html += `<path d="${path(pred)}" fill="none" stroke="#ff7a18" stroke-width="2.2"/>`;
+    if (actual) html += `<path d="${path(actual)}" fill="none" stroke="#7fd1ff" stroke-width="2.2" stroke-dasharray="4 3"/>`;
+    labels.forEach((l, i) => { if (i % 4 === 0) html += `<text x="${sx(i)}" y="${h - 6}" fill="#6b7785" font-size="10" text-anchor="middle">${l}</text>`; });
+    html += `<g font-size="11" fill="#cdd7e0">
+      <rect x="${w - 200}" y="6" width="194" height="22" fill="#161b22" stroke="#2b3440" rx="4"/>
+      <line x1="${w - 192}" y1="17" x2="${w - 172}" y2="17" stroke="#ff7a18" stroke-width="2.2"/>
+      <text x="${w - 168}" y="20">predicted</text>
+      <line x1="${w - 110}" y1="17" x2="${w - 90}" y2="17" stroke="#7fd1ff" stroke-width="2.2" stroke-dasharray="4 3"/>
+      <text x="${w - 86}" y="20">${actual ? "actual" : "(awaiting)"}</text></g>`;
+    svg.innerHTML = html; return svg;
   }
 
   /* ---------- results + district map ---------- */
@@ -183,17 +323,17 @@
   let dmap, dLayer;
   function initDistMap() {
     if (dmap || typeof L === "undefined" || !META.districts_geo) {
-      if (!META.districts_geo && !dmap) $("#distmap").innerHTML = '<div style="padding:20px;color:#9aa7b4">District layer unavailable (needs the ODF boundary fetch at build time).</div>';
+      if (!META.districts_geo && !dmap) $("#distmap").innerHTML = '<div style="padding:20px;color:#9aa7b4">District layer unavailable.</div>';
       return;
     }
     dmap = L.map("distmap", { zoomControl: true, minZoom: 5, maxZoom: 9 }).setView([44.0, -120.5], 6);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd" }).addTo(dmap);
+    L.tileLayer(DARK_TILES, { subdomains: "abcd" }).addTo(dmap);
     const vals = META.districts_geo.features.map(f => f.properties.pred_count || 0), max = Math.max(...vals) || 1;
     dLayer = L.geoJSON(META.districts_geo, {
       style: f => ({ fillColor: rampFromStops(RISK_STOPS, (f.properties.pred_count || 0) / max), color: "#0b0e12", weight: 1, fillOpacity: .8 }),
       onEachFeature: (f, l) => {
         const p = f.properties;
-        l.bindTooltip(`<b>${p.district}</b><br>${Math.round(p.pred_count)} fires (95% ${Math.round(p.pred_lo)}–${Math.round(p.pred_hi)})`, { sticky: true, className: "lbltip" });
+        l.bindTooltip(`<b>${p.district}</b><br>${Math.round(p.pred_count)} fires (95% ${Math.round(p.pred_lo)}–${Math.round(p.pred_hi)})`, { sticky: true, className: "citytip" });
         l.on("mouseover", () => l.setStyle({ weight: 2.5, color: "#fff" }));
         l.on("mouseout", () => dLayer.resetStyle(l));
       }

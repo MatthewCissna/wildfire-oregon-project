@@ -20,6 +20,8 @@
   <nav class="tabs" id="tabs">
     <button data-tab="overview" class="active">Overview</button>
     <button data-tab="map">Risk Map</button>
+    <button data-tab="forecast">Weekly Forecast</button>
+    <button data-tab="tracker">Predictions Tracker</button>
     <button data-tab="results">Models &amp; Results</button>
     <button data-tab="data">Data Explorer</button>
     <button data-tab="paper">Paper</button>
@@ -73,13 +75,11 @@
           <label>Surface
             <select id="metric"></select>
           </label>
-          <label class="chk"><input type="checkbox" id="distToggle"/> Fire districts</label>
-          <label class="chk"><input type="checkbox" id="ecoToggle"/> Ecoregions</label>
-          <label>Opacity <input type="range" id="opacity" min="20" max="100" value="85"/></label>
-          <span class="hint">Hover to probe · click for full detail →</span>
+          <label class="chk"><input type="checkbox" id="citiesToggle" checked/> Cities</label>
+          <label class="chk"><input type="checkbox" id="distToggle"/> Districts</label>
+          <span class="hint">Click any city or any point in Oregon for detail →</span>
         </div>
         <div id="leaflet"></div>
-        <div id="hovertip" class="hovertip" hidden></div>
         <div id="legend" class="legend"></div>
       </div>
       <aside id="detail" class="detail">
@@ -89,6 +89,82 @@
             normals, NDVI, fire history by year, and modeled risk.</p>
         </div>
       </aside>
+    </div>
+  </section>
+
+  <!-- ============ FORECAST ============ -->
+  <section id="forecast" class="tab">
+    <h2>Weekly forecast — <span id="fc-year">2025</span> fire season</h2>
+    <p class="muted">Predictions made <strong>now</strong> by the trained risk model for every
+      Oregon hex, week by week. Each week's surface uses the per-cell climatology of every
+      input feature (weather, NDVI, drought, fuel) for that week-of-year run through the
+      gradient-boosted model — an honest "expected risk under typical conditions" forecast,
+      since real seasonal weather forecasts aren't part of this pipeline. Compares against
+      actuals as 2025 data becomes available (see <em>Predictions Tracker</em>).</p>
+
+    <div class="fc-headline" id="fc-headline"></div>
+
+    <div class="panel">
+      <div class="fc-controls">
+        <button id="fc-prev">◀ Prev week</button>
+        <input type="range" id="fc-slider" min="0" value="0"/>
+        <button id="fc-next">Next week ▶</button>
+        <span class="hint" id="fc-label"></span>
+      </div>
+      <div class="fc-maplayout">
+        <div class="mapwrap">
+          <div id="fc-map"></div>
+          <div id="fc-legend" class="legend"></div>
+        </div>
+        <div class="panel inset">
+          <h3>Predicted for this week</h3>
+          <div id="fc-stats"></div>
+          <h4>Top 8 districts by expected fires</h4>
+          <div id="fc-dists"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Expected weekly statewide fire activity (2025)</h3>
+      <p class="muted">Sum of per-cell predicted risk; tracks the seasonal climatological arc.</p>
+      <div id="fc-curve"></div>
+    </div>
+  </section>
+
+  <!-- ============ TRACKER ============ -->
+  <section id="tracker" class="tab">
+    <h2>Predictions Tracker — locked predictions vs. reality</h2>
+    <p class="muted">All predictions on this page were <strong>locked at build time</strong>
+      (see timestamp) — they cannot be changed after the fact. When the 2025 fire season is
+      complete (or partially complete), run
+      <code>uv run python scripts/verify_predictions.py</code> to pull real MODIS observations
+      via Earth Engine and the comparison columns below populate. This is the project's most
+      honest test: out-of-time, out-of-sample, against ground truth.</p>
+
+    <div class="panel" id="tr-status"></div>
+
+    <div class="ov-grid">
+      <div class="panel">
+        <h3>Statewide forecast</h3>
+        <div id="tr-state"></div>
+      </div>
+      <div class="panel">
+        <h3>Per-district forecast</h3>
+        <div id="tr-districts"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Top 40 highest-risk cells (locked)</h3>
+      <p class="muted">Mean predicted risk across the 2025 fire season. Hit = the cell actually
+        burned during 2025 (≥1 cell-week with MODIS-detected fire) — fills in after verification.</p>
+      <div id="tr-cells"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Weekly state forecast vs actual</h3>
+      <div id="tr-curve"></div>
     </div>
   </section>
 
@@ -192,6 +268,6 @@
 <script src="data/meta.js"></script>
 <script src="data/cells.js"></script>
 <script src="paper.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

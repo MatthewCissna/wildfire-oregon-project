@@ -33,6 +33,41 @@ WORLDCOVER = {
     50: "Built-up", 60: "Bare / sparse", 70: "Snow / ice", 80: "Water",
     90: "Herbaceous wetland", 95: "Mangroves", 100: "Moss / lichen",
 }
+
+# Oregon cities used for context on the risk map (name, lat, lon, ~population).
+# A focused list across all major regions; rendered as clickable markers.
+OREGON_CITIES = [
+    ("Portland", 45.523, -122.676, 652000), ("Salem", 44.943, -123.035, 175000),
+    ("Eugene", 44.052, -123.087, 175000), ("Bend", 44.058, -121.315, 99000),
+    ("Medford", 42.327, -122.873, 86000), ("Corvallis", 44.564, -123.262, 59000),
+    ("Springfield", 44.046, -123.022, 60000), ("Albany", 44.636, -123.106, 56000),
+    ("Hillsboro", 45.523, -122.989, 106000), ("Beaverton", 45.487, -122.804, 98000),
+    ("Gresham", 45.498, -122.430, 113000), ("Tualatin", 45.384, -122.763, 27000),
+    ("Klamath Falls", 42.225, -121.781, 21000), ("Roseburg", 43.217, -123.342, 23000),
+    ("Grants Pass", 42.439, -123.328, 39000), ("Ashland", 42.195, -122.709, 21000),
+    ("Pendleton", 45.672, -118.789, 17000), ("La Grande", 45.324, -118.087, 13000),
+    ("Baker City", 44.775, -117.835, 10000), ("Ontario", 44.026, -116.963, 12000),
+    ("Burns", 43.586, -118.995, 2700), ("Lakeview", 42.189, -120.345, 2400),
+    ("John Day", 44.416, -118.954, 1700), ("Madras", 44.633, -121.130, 7000),
+    ("Prineville", 44.300, -120.834, 12000), ("Hermiston", 45.840, -119.289, 19000),
+    ("The Dalles", 45.595, -121.179, 16000), ("Hood River", 45.706, -121.521, 8000),
+    ("Astoria", 46.188, -123.831, 10000), ("Tillamook", 45.456, -123.844, 5300),
+    ("Newport", 44.638, -124.052, 10000), ("Coos Bay", 43.366, -124.218, 16000),
+    ("Brookings", 42.053, -124.284, 6900), ("Florence", 43.983, -124.099, 9300),
+    ("Sisters", 44.291, -121.549, 3300), ("Redmond", 44.272, -121.174, 36000),
+]
+
+
+def nearest_city(lon: float, lat: float) -> tuple[str, float]:
+    """Return (city_name, distance_km) for the closest Oregon city."""
+    best, best_d = None, float("inf")
+    for name, clat, clon, _pop in OREGON_CITIES:
+        dx = (lon - clon) * np.cos(np.radians((lat + clat) / 2))
+        dy = (lat - clat)
+        d = np.sqrt(dx * dx + dy * dy) * 111.0  # deg -> km
+        if d < best_d:
+            best_d, best = d, name
+    return best, round(float(best_d), 1)
 WEATHER_MEANS = ["tmax", "rmin", "wind", "precip", "vpd", "erc", "bi", "pdsi", "ndvi", "days_since_rain"]
 
 # Metrics rendered as smooth surfaces: (cell-property, label, unit, matplotlib cmap, value-scale)
@@ -118,9 +153,22 @@ def build(cfg) -> dict:
     pct = (risk.argsort().argsort() / max(1, len(risk) - 1))
     surf = surf.assign(risk_pct=pct)
 
+    # ---- nearest city (vectorized, computed once) ----
+    cnames = np.array([c[0] for c in OREGON_CITIES])
+    clats = np.array([c[1] for c in OREGON_CITIES])
+    clons = np.array([c[2] for c in OREGON_CITIES])
+    cell_lons = surf["lon"].to_numpy(); cell_lats = surf["lat"].to_numpy()
+    midlat = (cell_lats[:, None] + clats[None, :]) / 2
+    dx = (cell_lons[:, None] - clons[None, :]) * np.cos(np.radians(midlat))
+    dy = (cell_lats[:, None] - clats[None, :])
+    dist_km = np.sqrt(dx * dx + dy * dy) * 111.0
+    nidx = dist_km.argmin(axis=1)
+    near_city = cnames[nidx]
+    near_dist = dist_km[np.arange(len(nidx)), nidx]
+
     # ---- per-cell records (no geometry) ----
     cells = []
-    for _, r in surf.iterrows():
+    for i, (_, r) in enumerate(surf.iterrows()):
         cid = r["cell_id"]; a = agg.loc[cid] if cid in agg.index else None
         lc = int(round(r["landcover"])) if pd.notna(r.get("landcover")) else None
         rec = {
@@ -129,6 +177,8 @@ def build(cfg) -> dict:
             "elev": _round(r.get("elevation"), 0), "slope": _round(r.get("slope"), 1),
             "aspect": _round(r.get("aspect"), 0), "landcover": WORLDCOVER.get(lc, "—"),
             "fuel": _round(r.get("fuel_load"), 2),
+            "near_city": str(near_city[i]),
+            "near_km": _round(near_dist[i], 1),
             "fires_total": int(a["total"]) if a is not None else 0,
             "fires_rate": _round(a["fire_rate"], 2) if a is not None else 0,
             "fires_by_year": fby_map.get(cid, [0] * len(years)),
@@ -214,6 +264,18 @@ def build(cfg) -> dict:
              "value": _round(d["mean_abs_shap"], 4)} for d in tab.get("shap_top15", [])]
     _regen_shap_figure(shap, site)
 
+    # ---- weekly forecast (next-season climatological prediction) ----
+    print("   generating weekly forecast (this takes ~1 min) ...")
+    forecast = build_forecast(cfg, feats, surf, geom, site, target_year=2025)
+    # Lock the predictions to disk so the Tracker tab can compare against actuals later.
+    locked_path = site / "data" / "predictions.json"
+    locked_path.write_text(json.dumps({
+        "locked_at_utc": pd.Timestamp.utcnow().isoformat(),
+        "target_year": forecast["target_year"],
+        "predicted": forecast["predicted"],
+        "actuals": None,  # populated by scripts/verify_predictions.py when data arrives
+    }, indent=2))
+
     meta = {
         "manifest": manifest, "years": years,
         "schemes": {s: scheme_table(s) for s in tab["schemes"]},
@@ -222,6 +284,10 @@ def build(cfg) -> dict:
         "districts_geo": districts_geo, "ecoregions_geo": eco_geo,
         "cnn": cnn["test_metrics"] if cnn else None, "cnn_backbone": cnn["backbone"] if cnn else None,
         "ecoregions": eco_rows, "state_fires_by_year": state_fby, "surfaces": surfaces,
+        "cities": [{"name": n, "lat": lat, "lon": lon, "pop": pop} for n, lat, lon, pop in OREGON_CITIES],
+        "forecast": forecast,
+        "predictions": json.loads((site / "data" / "predictions.json").read_text())
+        if (site / "data" / "predictions.json").exists() else None,
     }
 
     (site / "data" / "cells.js").write_text(
@@ -243,6 +309,160 @@ def surf_value(rec, key):
         return np.nan
     v = rec.get(key)
     return np.nan if v is None else v
+
+
+def _week_label(d):
+    return d.strftime("%b %d")
+
+
+def build_forecast(cfg, feats, surf, geom, site, target_year=2025):
+    """Predict next-season weekly risk for every cell, write surfaces + summary.
+
+    Approach: for each fire-season week of ``target_year`` we use **per-cell
+    climatology** of every input feature (the historical mean for that
+    week-of-year across all training years), feed it through the trained risk model,
+    and render the resulting cell-wise risk as a smooth IDW surface. This is an
+    honest "expected risk under typical conditions for week W" forecast — the only
+    leverage we have without a real weather forecast, and it tracks the seasonal
+    arc clearly. Plus precomputed totals (state + per district).
+    """
+    from wildfire.features.build import feature_columns
+    from wildfire.models import risk as risk_mod
+
+    rm = risk_mod.RiskModel.load(cfg.path_for("models") / "risk_model.joblib")
+    cols = rm.feature_cols
+    df = feats[[*cols, "cell_id", "date"]].copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df["woy"] = df["date"].dt.isocalendar().week.astype(int)
+
+    # Per (cell, week-of-year) climatology of every model input feature.
+    clim = df.groupby(["cell_id", "woy"])[cols].mean().reset_index()
+
+    # Build the forecast date list: weekly Mondays of the target year's fire season.
+    season_months = set(cfg.get("time.fire_season_months", [5, 6, 7, 8, 9, 10]))
+    all_mondays = pd.date_range(f"{target_year}-04-28", f"{target_year}-11-10", freq="W-MON")
+    forecast_dates = [d for d in all_mondays if d.month in season_months]
+
+    cells_df = surf[["cell_id", "lon", "lat", "ecoregion"]].copy()
+    forecast_dir = site / "assets" / "forecast"
+    forecast_dir.mkdir(parents=True, exist_ok=True)
+
+    weekly = []  # one entry per forecast week
+    cell_risk_acc = {cid: 0.0 for cid in cells_df["cell_id"]}
+    cell_risk_n = 0
+
+    # District map (best-effort) for per-district aggregation
+    try:
+        from wildfire.ingest.districts import assign_districts
+        dmap = assign_districts(surf, cfg).set_index("cell_id")["district"].to_dict()
+    except Exception:
+        dmap = {}
+
+    # Cap a global colormap to the max across all weeks so PNGs compare directly.
+    week_scores = {}
+    for d in forecast_dates:
+        woy = int(pd.Timestamp(d).isocalendar().week)
+        snap = clim[clim["woy"] == woy]
+        if snap.empty:
+            continue
+        snap = snap.merge(cells_df, on="cell_id", how="inner")
+        # Override calendar features to the forecast week (cyclic seasonality).
+        doy = d.timetuple().tm_yday
+        snap["doy_sin"] = np.sin(2 * np.pi * doy / 365.25)
+        snap["doy_cos"] = np.cos(2 * np.pi * doy / 365.25)
+        if "month" in snap.columns:
+            snap["month"] = d.month
+        scores = rm.predict_risk(snap)
+        week_scores[d] = (snap["cell_id"].to_numpy(), snap["lon"].to_numpy(),
+                          snap["lat"].to_numpy(), scores)
+
+    vmax_global = max((s[3].max() for s in week_scores.values()), default=1.0)
+    for d, (cids, lons, lats, scores) in week_scores.items():
+        png = forecast_dir / f"week_{d.strftime('%Y-%m-%d')}.png"
+        _surface_fixed(lons, lats, scores, geom, png, "inferno", vmax=vmax_global)
+        for cid, s in zip(cids, scores):
+            cell_risk_acc[cid] = cell_risk_acc.get(cid, 0.0) + float(s)
+        cell_risk_n += 1
+        # district aggregates
+        dist_exp = {}
+        for cid, s in zip(cids, scores):
+            dist = dmap.get(cid, "Outside ODF protection")
+            dist_exp[dist] = dist_exp.get(dist, 0.0) + float(s)
+        weekly.append({
+            "date": d.strftime("%Y-%m-%d"),
+            "label": _week_label(d),
+            "png": f"assets/forecast/{png.name}",
+            "expected_state": round(float(scores.sum()), 1),
+            "max_risk": round(float(scores.max()) * 100, 2),
+            "mean_risk": round(float(scores.mean()) * 100, 3),
+            "district_expected": {k: round(v, 1) for k, v in dist_exp.items()},
+        })
+
+    # Mean per-cell risk across the season → ranked predictions (locked).
+    mean_risk = {cid: cell_risk_acc[cid] / max(1, cell_risk_n) for cid in cells_df["cell_id"]}
+    cells_df["pred_risk"] = cells_df["cell_id"].map(mean_risk)
+    cells_df["pct"] = cells_df["pred_risk"].rank(pct=True)
+
+    top_cells = []
+    for _, r in cells_df.sort_values("pred_risk", ascending=False).head(40).iterrows():
+        nc, nd = nearest_city(r["lon"], r["lat"])
+        top_cells.append({
+            "id": r["cell_id"], "lon": _round(r["lon"], 3), "lat": _round(r["lat"], 3),
+            "eco": r["ecoregion"], "near_city": nc, "near_km": nd,
+            "pred_risk": round(float(r["pred_risk"]) * 100, 3),
+        })
+    state_total = float(sum(w["expected_state"] for w in weekly))
+    district_total = {}
+    for w in weekly:
+        for k, v in w["district_expected"].items():
+            district_total[k] = district_total.get(k, 0.0) + v
+    district_total = sorted(
+        ({"district": k, "expected_fires": round(v, 0)} for k, v in district_total.items()),
+        key=lambda d: -d["expected_fires"],
+    )
+
+    forecast_info = {
+        "target_year": target_year,
+        "n_weeks": len(weekly),
+        "weeks": weekly,
+        "next_week": weekly[0] if weekly else None,
+        "vmax_pct": round(float(vmax_global) * 100, 2),
+        "predicted": {
+            "state_expected_fires": round(state_total, 0),
+            "districts": district_total,
+            "top_cells": top_cells,
+            "weekly_curve": [{"date": w["date"], "label": w["label"],
+                              "expected": w["expected_state"]} for w in weekly],
+        },
+    }
+    return forecast_info
+
+
+def _surface_fixed(lons, lats, vals, geom, out_png, cmap_name, vmax, res=(900, 820)):
+    """IDW surface with a FIXED max for comparability across weeks."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.cm as cm
+    import matplotlib.pyplot as plt
+    from scipy.spatial import cKDTree
+
+    minx, miny, maxx, maxy = geom.bounds
+    W, H = res
+    xs = np.linspace(minx, maxx, W)
+    ys = np.linspace(maxy, miny, H)
+    gx, gy = np.meshgrid(xs, ys)
+    tree = cKDTree(np.c_[lons, lats])
+    k = min(14, len(lons))
+    dist, idx = tree.query(np.c_[gx.ravel(), gy.ravel()], k=k)
+    w = 1.0 / (dist ** 2 + 1e-9)
+    interp = (w * vals[idx]).sum(1) / w.sum(1)
+    grid = interp.reshape(H, W)
+    norm = np.clip(grid / (vmax + 1e-12), 0, 1)
+    cmap = cm.get_cmap(cmap_name)
+    rgba = (cmap(norm) * 255).astype(np.uint8)
+    rgba[..., 3] = np.where(_poly_mask(gx, gy, geom), 215, 0).astype(np.uint8)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    plt.imsave(out_png, rgba)
 
 
 def _regen_shap_figure(shap, site):

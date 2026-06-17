@@ -158,6 +158,36 @@ table.t.click tr{cursor:pointer} table.t.click tr:hover td{background:var(--bg2)
 @keyframes pulse{0%{stroke-opacity:.9;stroke-width:2}70%{stroke-opacity:0;stroke-width:14}100%{stroke-opacity:0}}
 .leaflet-interactive.pulse{animation:pulse 1.6s ease-out infinite}
 
+/* cities (map) */
+.citytip{background:#0e1116 !important;border:1px solid var(--line) !important;color:var(--text) !important;
+  font-size:11px;padding:2px 6px;font-weight:600}
+
+/* forecast tab */
+.fc-headline{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:16px 0}
+@media(max-width:860px){.fc-headline{grid-template-columns:1fr 1fr}}
+.fc-card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);
+  border-radius:14px;padding:16px}
+.fc-card .big{font-size:24px;font-weight:800;color:var(--accent2)}
+.fc-card .lbl{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+.fc-controls{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.fc-controls button{background:var(--bg2);color:var(--text);border:1px solid var(--line);
+  border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600}
+.fc-controls button:hover{border-color:var(--accent)}
+.fc-controls input[type=range]{flex:1;min-width:200px;accent-color:var(--accent)}
+.fc-controls .hint{font-size:12px;color:var(--muted)}
+.fc-maplayout{display:grid;grid-template-columns:1.4fr 1fr;gap:14px;align-items:start}
+@media(max-width:860px){.fc-maplayout{grid-template-columns:1fr}}
+#fc-map{height:500px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#0b0e12;position:relative}
+.panel.inset{margin:0;background:var(--bg2)}
+.panel.inset h4{margin-top:14px}
+
+/* tracker tab */
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.4px}
+.badge.ok{background:rgba(63,185,80,.18);color:#7be58a;border:1px solid rgba(63,185,80,.4)}
+.badge.miss{background:rgba(215,25,28,.18);color:#ff8a8a;border:1px solid rgba(215,25,28,.4)}
+.badge.wait{background:rgba(255,179,71,.16);color:#ffb347;border:1px solid rgba(255,179,71,.4)}
+
 /* leaflet dark tweaks */
 .leaflet-container{background:#0b0e12}
 .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel);color:var(--text)}
