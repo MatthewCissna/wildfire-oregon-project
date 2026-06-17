@@ -53,6 +53,18 @@ Step 4 ingests synthetic data, builds features, trains the risk + count models,
 evaluates them with spatial CV, and writes a heatmap to `outputs/maps/` — proving
 the pipeline end-to-end before any real data is pulled.
 
+### Interactive website
+
+A self-contained atlas — clickable risk map with per-cell detail, results, data
+explorer, and a paper — lives in [`site/`](site/). Build its data and serve it:
+
+```powershell
+uv run python scripts/build_site.py                 # refresh site/data from outputs
+uv run python -m http.server 8000 --directory site  # open http://localhost:8000
+```
+
+(Or just double-click `site/index.html`.) See [`site/README.md`](site/README.md).
+
 ### Set up Earth Engine (for real data)
 
 The only manual step. Follow **[`docs/earth_engine_setup.md`](docs/earth_engine_setup.md)**
