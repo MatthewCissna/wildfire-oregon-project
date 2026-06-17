@@ -104,7 +104,9 @@ def count_choropleth(
     center = [(miny + maxy) / 2, (minx + maxx) / 2]
     m = folium.Map(location=center, zoom_start=7, tiles="CartoDB positron")
     colormap = _quantile_colormap(gdf[value_col].to_numpy())
-    colormap.caption = "Predicted fires per region per season"
+    colormap.caption = "Predicted fires per district per season"
+    name_field = next((c for c in ("district", "region", "ecoregion") if c in gdf.columns), None)
+    fields = ([name_field] if name_field else []) + [value_col]
     folium.GeoJson(
         gdf.__geo_interface__,
         style_function=lambda feat: {
@@ -112,7 +114,7 @@ def count_choropleth(
             if feat["properties"].get(value_col) is not None else "#00000000",
             "color": "#555", "weight": 0.5, "fillOpacity": 0.6,
         },
-        tooltip=folium.GeoJsonTooltip(fields=[value_col]),
+        tooltip=folium.GeoJsonTooltip(fields=fields),
     ).add_to(m)
     colormap.add_to(m)
     Path(out_html).parent.mkdir(parents=True, exist_ok=True)

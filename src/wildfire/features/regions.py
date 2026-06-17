@@ -26,20 +26,28 @@ _AGG_FEATURES = [
 
 
 def build_region_season(
-    cfg: Config | None = None, features: pd.DataFrame | None = None, region_col: str | None = None
+    cfg: Config | None = None, features: pd.DataFrame | None = None,
+    region_col: str | None = None, region_map=None,
 ) -> pd.DataFrame:
-    """Region × fire-season-year table for the count model."""
+    """Region × fire-season-year table for the count model.
+
+    ``region_map`` (optional): a dict/Series keyed by ``cell_id`` mapping each cell to
+    a region name (e.g. fire district). When given, cells are grouped by it — this
+    lets callers use regions (like ODF districts) that aren't part of the feature build.
+    """
     cfg = cfg or load_config()
     if features is None:
         from wildfire.features.build import build_feature_matrix
 
         features = build_feature_matrix(cfg)
 
-    # Default region unit: ecoregion when available, else the H3 spatial block.
-    if region_col is None:
-        region_col = "ecoregion" if "ecoregion" in features.columns else "block_id"
-
     df = features.copy()
+    if region_map is not None:
+        df["__region__"] = df["cell_id"].map(dict(region_map))
+        region_col = "__region__"
+    elif region_col is None:
+        # Default region unit: ecoregion when available, else the H3 spatial block.
+        region_col = "ecoregion" if "ecoregion" in features.columns else "block_id"
     df["year"] = pd.to_datetime(df["date"]).dt.year
 
     agg = {c: "mean" for c in _AGG_FEATURES if c in df.columns}

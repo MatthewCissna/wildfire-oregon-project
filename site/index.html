@@ -70,22 +70,16 @@
     <div class="maplayout">
       <div class="mapwrap">
         <div class="mapcontrols">
-          <label>Color by
-            <select id="metric">
-              <option value="risk_pct">Modeled risk</option>
-              <option value="fires_rate">Fire rate (%)</option>
-              <option value="fuel">Fuel load</option>
-              <option value="elev">Elevation</option>
-              <option value="vpd">Mean VPD</option>
-              <option value="ndvi">Mean NDVI</option>
-            </select>
+          <label>Surface
+            <select id="metric"></select>
           </label>
-          <label>Ecoregion
-            <select id="ecofilter"><option value="">All</option></select>
-          </label>
-          <span class="hint">Click any hex for full detail →</span>
+          <label class="chk"><input type="checkbox" id="distToggle"/> Fire districts</label>
+          <label class="chk"><input type="checkbox" id="ecoToggle"/> Ecoregions</label>
+          <label>Opacity <input type="range" id="opacity" min="20" max="100" value="85"/></label>
+          <span class="hint">Hover to probe · click for full detail →</span>
         </div>
         <div id="leaflet"></div>
+        <div id="hovertip" class="hovertip" hidden></div>
         <div id="legend" class="legend"></div>
       </div>
       <aside id="detail" class="detail">
@@ -144,8 +138,13 @@
     </div>
 
     <div class="panel">
-      <h3>Fire-count forecasts per ecoregion (negative binomial, with 95% intervals)</h3>
-      <div id="count-box"></div>
+      <h3>Fire-count forecast by ODF fire-protection district</h3>
+      <p class="muted">Negative-binomial model, latest season, with 95% prediction intervals.
+        Click a district on the map or a table row for detail.</p>
+      <div class="distlayout">
+        <div id="distmap"></div>
+        <div id="count-box"></div>
+      </div>
     </div>
   </section>
 

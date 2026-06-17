@@ -54,9 +54,11 @@ def explain_risk(
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
+        from wildfire.feature_labels import label_feature
+
         top = importance.head(20).iloc[::-1]
-        fig, ax = plt.subplots(figsize=(8, 7))
-        ax.barh(top["feature"], top["mean_abs_shap"], color="#c1440e")
+        fig, ax = plt.subplots(figsize=(8.5, 7))
+        ax.barh(top["feature"].map(label_feature), top["mean_abs_shap"], color="#c1440e")
         ax.set_xlabel("mean |SHAP value|")
         ax.set_title("Risk model — top feature importances (SHAP)")
         fig.tight_layout()
