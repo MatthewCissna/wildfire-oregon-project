@@ -1,0 +1,83 @@
+name: Update predictions vs. actuals
+
+# Fully automated weekly refresh:
+#  1. Pull the latest MODIS fire labels for the target year from Earth Engine
+#     (using a service-account key supplied via GitHub Secrets).
+#  2. Re-run scripts/verify_predictions.py to fill in the "actual" column of
+#     site/data/predictions.{json,js}.
+#  3. Commit & push the updated file back to main — which automatically triggers
+#     the Pages deploy workflow above and the live site refreshes.
+#
+# Schedule: weekly, every Monday at 09:00 UTC (~2 AM Pacific) during fire season.
+# Manually triggerable from the Actions tab too.
+#
+# REQUIRED SECRETS (one-time setup — see docs/github_deploy_setup.md):
+#   EE_SERVICE_ACCOUNT_KEY  base64-encoded service-account JSON
+#   EE_PROJECT              Earth Engine Cloud project id (e.g. wildfire-prediction-499606)
+
+on:
+  schedule:
+    # Mondays 09:00 UTC, May through November (Oregon fire season).
+    - cron: "0 9 * 5-11 1"
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "Target year to verify against (default: from predictions.json)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write  # needed to push the updated predictions back to main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+
+      - name: Install project (core deps only — no CNN extra needed)
+        run: uv sync
+
+      - name: Cache GEE per-timestep pulls
+        # The pull is checkpointed to data/interim/_gee_cache; persist across runs so
+        # the action only refreshes timesteps it hasn't seen.
+        uses: actions/cache@v4
+        with:
+          path: data/interim/_gee_cache
+          key: gee-cache-${{ github.event.inputs.year || '2025' }}
+          restore-keys: |
+            gee-cache-
+
+      - name: Run verification (pulls latest MODIS labels)
+        env:
+          EE_SERVICE_ACCOUNT_KEY: ${{ secrets.EE_SERVICE_ACCOUNT_KEY }}
+          EE_PROJECT: ${{ secrets.EE_PROJECT }}
+        run: |
+          if [ -n "${{ github.event.inputs.year }}" ]; then
+            uv run python scripts/verify_predictions.py --year ${{ github.event.inputs.year }}
+          else
+            uv run python scripts/verify_predictions.py
+          fi
+
+      - name: Commit & push updated predictions
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet site/data/predictions.json site/data/predictions.js; then
+            echo "No changes to predictions — exiting cleanly."
+            exit 0
+          fi
+          git add site/data/predictions.json site/data/predictions.js
+          git commit -m "chore: refresh predictions vs actuals ($(date -u +%Y-%m-%d))"
+          git push

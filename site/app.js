@@ -228,7 +228,7 @@
 
   /* ---------- predictions tracker ---------- */
   function buildTracker() {
-    const P = META.predictions;
+    const P = window.WF_PREDICTIONS || META.predictions;
     if (!P) { $("#tr-status").innerHTML = '<div class="muted">No locked predictions yet — run scripts/build_site.py.</div>'; return; }
     const A = P.actuals;
     const status = A

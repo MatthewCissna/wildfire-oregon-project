@@ -65,6 +65,19 @@ uv run python -m http.server 8000 --directory site  # open http://localhost:8000
 
 (Or just double-click `site/index.html`.) See [`site/README.md`](site/README.md).
 
+**Auto-deploy to GitHub Pages + weekly automated updates.** The repo ships with
+two GitHub Actions workflows:
+
+- [`.github/workflows/pages.yml`](.github/workflows/pages.yml) — deploys `site/`
+  to GitHub Pages on every push to `main`.
+- [`.github/workflows/update.yml`](.github/workflows/update.yml) — runs every
+  Monday during fire season, pulls the latest MODIS labels via Earth Engine
+  (using a service-account key from GitHub Secrets), refreshes
+  `site/data/predictions.{json,js}` with the actuals, and commits — which
+  triggers `pages.yml` and the live site updates itself.
+
+One-time setup: see [`docs/github_deploy_setup.md`](docs/github_deploy_setup.md).
+
 ### Set up Earth Engine (for real data)
 
 The only manual step. Follow **[`docs/earth_engine_setup.md`](docs/earth_engine_setup.md)**

@@ -292,8 +292,15 @@ def build(cfg) -> dict:
 
     (site / "data" / "cells.js").write_text(
         "window.WF_CELLS=" + json.dumps({"years": years, "cells": cells}, separators=(",", ":")) + ";", encoding="utf-8")
+    # Predictions live in their own file so the scheduled CI job can refresh ONLY
+    # this small file (no model / no heavy data needed) and the site picks up new actuals.
+    predictions_blob = meta.pop("predictions", None)
     (site / "data" / "meta.js").write_text(
         "window.WF_META=" + json.dumps(meta, separators=(",", ":")) + ";", encoding="utf-8")
+    if predictions_blob is not None:
+        (site / "data" / "predictions.js").write_text(
+            "window.WF_PREDICTIONS=" + json.dumps(predictions_blob, separators=(",", ":")) + ";",
+            encoding="utf-8")
     for fig in ("risk_map.png",):
         src = cfg.path_for("figures") / fig
         if src.exists():

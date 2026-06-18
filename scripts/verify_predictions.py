@@ -102,11 +102,16 @@ def main() -> int:
         "weekly_curve": [{"date": d, "actual": v} for d, v in weekly_actual_map.items()],
     }
     pred_path.write_text(json.dumps(pred, indent=2))
+    # Also refresh the website-loaded JS so the Tracker tab updates without a full rebuild.
+    (REPO_ROOT / "site" / "data" / "predictions.js").write_text(
+        "window.WF_PREDICTIONS=" + json.dumps(pred, separators=(",", ":")) + ";",
+        encoding="utf-8",
+    )
     print(f"\n✅ Verification written -> {pred_path}")
     print(f"   state predicted : {pred['predicted']['state_expected_fires']:.0f} fires")
     print(f"   state actual    : {state_actual}")
     print(f"   top-cell hits   : {hits}/{len(top_cells_actual)} (top cells that did burn)")
-    print("   Re-run scripts/build_site.py to refresh the Tracker tab.")
+    print("   site/data/predictions.js refreshed; commit + push to update the live site.")
     return 0
 
 
