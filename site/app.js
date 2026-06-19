@@ -23,7 +23,7 @@
     document.querySelectorAll(".tab").forEach(s => s.classList.toggle("active", s.id === name));
     if (name === "map") { initMap(); if (map) setTimeout(() => map.invalidateSize(), 60); }
     if (name === "forecast") { initForecast(); if (fcMap) setTimeout(() => fcMap.invalidateSize(), 60); }
-    if (name === "tracker") { buildTracker(); }
+    if (name === "tracker") { buildTracker(); if (trMap) setTimeout(() => trMap.invalidateSize(), 60); }
     if (name === "results") { initDistMap(); if (dmap) setTimeout(() => dmap.invalidateSize(), 60); }
   }
 
@@ -77,9 +77,18 @@
     $("#foot-meta").textContent = `source: ${META.manifest.source} · ${(META.manifest.positive_rate * 100).toFixed(2)}% positive`;
   }
 
-  /* ---------- risk map (crisp vector tiles, click-only) ---------- */
-  const GRID_BORDER = "rgba(6,9,13,.5)";
-  let map, gridLayer, gridRects = [], cityLayer, distOutline, marker, state = { metric: "risk" };
+  /* ---------- risk map (true H3 hexagons, click-only) ---------- */
+  const HEX_BORDER = "rgba(6,9,13,.45)";
+  let map, hexLayer, hexPolys = [], cityLayer, distOutline, marker, state = { metric: "risk" };
+  // Normalize a cell's raw metric value to 0–1 against the same 2nd–98th pct range
+  // the legend uses (lo/hi shipped once per metric in META.hexes.lohi).
+  function hexNorm(cell, metric) {
+    const lohi = META.hexes && META.hexes.lohi[metric];
+    if (!lohi || !cell) return null;
+    const raw = cell[metric];
+    if (raw == null || isNaN(raw)) return null;
+    return Math.min(1, Math.max(0, (raw - lohi[0]) / (lohi[1] - lohi[0] + 1e-12)));
+  }
   function initMap() {
     if (map) return;
     if (typeof L === "undefined") {
@@ -91,7 +100,7 @@
 
     const sel = $("#metric");
     sel.innerHTML = Object.entries(SURF.metrics).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join("");
-    buildGrid();
+    buildHexes();
     setSurface("risk");
     sel.addEventListener("change", e => setSurface(e.target.value));
     $("#citiesToggle").addEventListener("change", e => toggleCities(e.target.checked));
@@ -101,34 +110,34 @@
     // Click in a gap between tiles: still snap to the nearest cell.
     map.on("click", e => { const c = nearest(e.latlng.lat, e.latlng.lng); selectCell(c); });
   }
-  // Draw the square lattice once as canvas rectangles; recolor on metric change.
-  function buildGrid() {
-    const G = META.grid;
-    if (!G) return;
+  // Draw every H3 hexagon once as a canvas polygon; recolor on metric change.
+  // hexPolys[i] corresponds to CELLS[i], so a click hits exactly that cell.
+  function buildHexes() {
+    const H = META.hexes;
+    if (!H) return;
     const renderer = L.canvas({ padding: 0.5 });
-    gridLayer = L.layerGroup();
-    const hy = G.dlat / 2, hx = G.dlon / 2;
-    G.cells.forEach(row => {
-      const lat = row[0], lon = row[1], rep = row[2];
-      const rect = L.rectangle([[lat - hy, lon - hx], [lat + hy, lon + hx]], {
-        renderer, weight: 0.5, color: GRID_BORDER, fillColor: "#222", fillOpacity: 0.85,
+    hexLayer = L.layerGroup();
+    H.poly.forEach((verts, i) => {
+      const cell = CELLS[i];
+      const poly = L.polygon(verts, {
+        renderer, weight: 0.4, color: HEX_BORDER, fillColor: "#222", fillOpacity: 0.85,
       });
-      rect._vals = row.slice(3);
-      rect.on("click", e => { L.DomEvent.stopPropagation(e); selectCell(CELLS[rep]); });
-      rect.on("mouseover", () => rect.setStyle({ weight: 1.6, color: "#fff" }));
-      rect.on("mouseout", () => rect.setStyle({ weight: 0.5, color: GRID_BORDER }));
-      gridRects.push(rect);
-      gridLayer.addLayer(rect);
+      poly._cell = cell;
+      poly.on("click", e => { L.DomEvent.stopPropagation(e); selectCell(cell); });
+      poly.on("mouseover", () => poly.setStyle({ weight: 1.7, color: "#fff" }));
+      poly.on("mouseout", () => poly.setStyle({ weight: 0.4, color: HEX_BORDER }));
+      hexPolys.push(poly);
+      hexLayer.addLayer(poly);
     });
-    gridLayer.addTo(map);
+    hexLayer.addTo(map);
   }
   function setSurface(metric) {
     state.metric = metric;
-    const m = SURF.metrics[metric], mi = META.grid ? META.grid.metrics.indexOf(metric) : -1;
-    gridRects.forEach(rect => {
-      const v = rect._vals[mi];
-      if (v == null) rect.setStyle({ fillOpacity: 0, stroke: false });
-      else rect.setStyle({ fillColor: rampFromStops(m.stops, v), fillOpacity: 0.85, stroke: true, weight: 0.5, color: GRID_BORDER });
+    const m = SURF.metrics[metric];
+    hexPolys.forEach(poly => {
+      const v = hexNorm(poly._cell, metric);
+      if (v == null) poly.setStyle({ fillOpacity: 0, stroke: false });
+      else poly.setStyle({ fillColor: rampFromStops(m.stops, v), fillOpacity: 0.85, stroke: true, weight: 0.4, color: HEX_BORDER });
     });
     if (cityLayer) cityLayer.eachLayer(l => l.bringToFront && l.bringToFront());
     if (distOutline) distOutline.bringToFront();
@@ -197,8 +206,9 @@
     $("#cellyears", d).appendChild(yearChart(p.fires_by_year, 340, 120));
   }
 
-  /* ---------- forecast tab ---------- */
-  let fcMap, fcOverlay, fcWeekIdx = 0, fcCityLayer;
+  /* ---------- forecast tab (true hexagons, recolored per week) ---------- */
+  const FC_BORDER = "rgba(6,9,13,.4)";
+  let fcMap, fcHexPolys = [], fcWeekIdx = 0, fcCityLayer;
   function initForecast() {
     if (fcMap || !META.forecast) {
       if (!META.forecast) $("#fc-headline").innerHTML = '<div class="panel">No forecast available — run scripts/build_site.py.</div>';
@@ -216,6 +226,7 @@
 
     fcMap = L.map("fc-map", { preferCanvas: true, minZoom: 5, maxZoom: 10 }).setView([44, -120.5], 6.3);
     L.tileLayer(DARK_TILES, { subdomains: "abcd" }).addTo(fcMap);
+    buildForecastHexes();
     fcCityLayer = L.layerGroup();
     META.cities.filter(c => c.pop > 50000).forEach(ct => {
       L.circleMarker([ct.lat, ct.lon], { radius: 4, color: "#fff", weight: 1, fillColor: "#ffe3b3", fillOpacity: .9 })
@@ -234,14 +245,41 @@
     $("#fc-curve").innerHTML = "";
     $("#fc-curve").appendChild(yearChart(curveVals, 980, 180, labels));
   }
+  // The same H3 hexagons as the risk map, on their own Leaflet instance.
+  function buildForecastHexes() {
+    const H = META.hexes;
+    if (!H) return;
+    const renderer = L.canvas({ padding: 0.5 });
+    const layer = L.layerGroup();
+    H.poly.forEach((verts, i) => {
+      const poly = L.polygon(verts, { renderer, weight: 0.3, color: FC_BORDER, fillColor: "#111", fillOpacity: 0.85 });
+      poly._idx = i;
+      poly.on("click", e => { L.DomEvent.stopPropagation(e); selectForecastCell(i); });
+      poly.on("mouseover", () => poly.setStyle({ weight: 1.5, color: "#fff" }));
+      poly.on("mouseout", () => poly.setStyle({ weight: 0.3, color: FC_BORDER }));
+      fcHexPolys.push(poly);
+      layer.addLayer(poly);
+    });
+    layer.addTo(fcMap);
+  }
+  function selectForecastCell(i) {
+    const cell = CELLS[i], F = META.forecast;
+    const rk = (F.hex.weeks[fcWeekIdx][i] / 100 * F.hex.vmax_pct).toFixed(2);
+    fcHexPolys[i].bindPopup(
+      `<b>${cell.near_city}</b> <span class="muted">(${cell.near_km} km)</span><br>${cell.eco}<br>` +
+      `Forecast risk this week: <b>${rk}%</b>`, { className: "citytip" }).openPopup();
+  }
   function setForecastWeek(i) {
-    fcWeekIdx = i; const F = META.forecast, wk = F.weeks[i];
+    fcWeekIdx = i; const F = META.forecast, wk = F.weeks[i], col = F.hex.weeks[i];
     $("#fc-slider").value = i;
     $("#fc-label").textContent = `${wk.label} 2025 · week ${i + 1} of ${F.weeks.length}`;
-    if (fcOverlay) fcMap.removeLayer(fcOverlay);
-    fcOverlay = L.imageOverlay(wk.png, SURF.bounds, { opacity: 0.9 }).addTo(fcMap);
+    fcHexPolys.forEach(poly => {
+      const t = col[poly._idx] / 100;
+      if (!t) poly.setStyle({ fillColor: "#0c0f14", fillOpacity: 0.06, stroke: false });
+      else poly.setStyle({ fillColor: rampFromStops(RISK_STOPS, t), fillOpacity: 0.85, stroke: true, weight: 0.3, color: FC_BORDER });
+    });
     if (fcCityLayer) fcCityLayer.eachLayer(l => l.bringToFront && l.bringToFront());
-    drawLegend({ label: "Risk", unit: "%", stops: RISK_STOPS, domain: [0, F.vmax_pct] }, "#fc-legend");
+    drawLegend({ label: "Risk", unit: "%", stops: RISK_STOPS, domain: [0, F.hex.vmax_pct] }, "#fc-legend");
     $("#fc-stats").innerHTML = `<div class="kv">
       <div class="k">Expected statewide fires</div><div class="v">${Math.round(wk.expected_state)}</div>
       <div class="k">Max single-cell risk</div><div class="v">${wk.max_risk.toFixed(2)}%</div>
@@ -255,7 +293,45 @@
   }
 
   /* ---------- predictions tracker ---------- */
+  // Hex map of the locked seasonal forecast: every cell coloured by predicted risk,
+  // the 40 highest-risk cells outlined (green once they're confirmed burned).
+  let trMap, trHexPolys = [];
+  function initTrackerMap() {
+    if (trMap || typeof L === "undefined" || !META.hexes || !(META.forecast && META.forecast.hex)) return;
+    const H = META.hexes, FH = META.forecast.hex, season = FH.season;
+    const P = window.WF_PREDICTIONS || META.predictions;
+    const topIds = new Set(((P && P.predicted && P.predicted.top_cells) || []).map(c => c.id));
+    const burned = {};
+    if (P && P.actuals && P.actuals.top_cells) P.actuals.top_cells.forEach(c => { burned[c.id] = c.actual_weeks_burned; });
+    trMap = L.map("tr-map", { preferCanvas: true, minZoom: 5, maxZoom: 10 }).setView([44, -120.5], 6.2);
+    L.tileLayer(DARK_TILES, { subdomains: "abcd" }).addTo(trMap);
+    const renderer = L.canvas({ padding: 0.5 });
+    const layer = L.layerGroup();
+    H.poly.forEach((verts, i) => {
+      const cell = CELLS[i], t = (season[i] || 0) / 100;
+      const isTop = topIds.has(cell.id), didBurn = burned[cell.id] > 0;
+      const poly = L.polygon(verts, {
+        renderer, fillColor: rampFromStops(RISK_STOPS, t), fillOpacity: t ? 0.85 : 0.05,
+        color: isTop ? (didBurn ? "#36d399" : "#ffffff") : "rgba(6,9,13,.4)", weight: isTop ? 1.8 : 0.3,
+      });
+      poly.on("click", e => {
+        L.DomEvent.stopPropagation(e);
+        const rk = (t * FH.season_max_pct).toFixed(2);
+        const actLine = (P && P.actuals) ? `<br>${didBurn ? `burned ${burned[cell.id]} wk in ${P.target_year}` : (isTop ? "no fire in " + P.target_year : "")}` : "";
+        poly.bindPopup(
+          `<b>${cell.near_city}</b> <span class="muted">(${cell.near_km} km)</span><br>${cell.eco}<br>` +
+          `Seasonal pred. risk: <b>${rk}%</b>${isTop ? " · top-40" : ""}${actLine}`, { className: "citytip" }).openPopup();
+      });
+      if (isTop) poly.bringToFront();
+      trHexPolys.push(poly);
+      layer.addLayer(poly);
+    });
+    layer.addTo(trMap);
+    drawLegend({ label: "Seasonal predicted risk", unit: "%", stops: RISK_STOPS, domain: [0, FH.season_max_pct] }, "#tr-legend");
+    setTimeout(() => trMap.invalidateSize(), 60);
+  }
   function buildTracker() {
+    initTrackerMap();
     const P = window.WF_PREDICTIONS || META.predictions;
     if (!P) { $("#tr-status").innerHTML = '<div class="muted">No locked predictions yet — run scripts/build_site.py.</div>'; return; }
     const A = P.actuals;

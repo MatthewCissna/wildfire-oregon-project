@@ -6,7 +6,7 @@
 <title>Oregon Wildfire ML · Interactive Atlas</title>
 <link rel="preconnect" href="https://unpkg.com" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
 <header class="topbar">
@@ -84,7 +84,7 @@
           </label>
           <label class="chk"><input type="checkbox" id="citiesToggle" checked/> Cities</label>
           <label class="chk"><input type="checkbox" id="distToggle"/> Districts</label>
-          <span class="hint">Click any tile or city to inspect it →</span>
+          <span class="hint">Click any hexagon or city to inspect it →</span>
         </div>
         <div id="leaflet"></div>
         <div id="legend" class="legend"></div>
@@ -92,15 +92,12 @@
       <aside id="detail" class="detail">
         <div class="detail-empty">
           <p class="detail-empty-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor"
+            <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor"
                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3.5" y="3.5" width="7" height="7" rx="1"/>
-              <rect x="13.5" y="3.5" width="7" height="7" rx="1"/>
-              <rect x="3.5" y="13.5" width="7" height="7" rx="1"/>
-              <rect x="13.5" y="13.5" width="7" height="7" rx="1"/>
+              <path d="M12 2.5 20 7v9l-8 4.5L4 16V7l8-4.5Z"/>
             </svg>
           </p>
-          <p>Pick a tile to see what's behind its risk: terrain, fuel, climate normals,
+          <p>Pick a hexagon to see what's behind its risk: terrain, fuel, climate normals,
             NDVI, year-by-year fire history, and the modeled score.</p>
         </div>
       </aside>
@@ -166,6 +163,17 @@
       <div class="panel">
         <h3>Per-district forecast</h3>
         <div id="tr-districts"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Predicted risk across Oregon (locked)</h3>
+      <p class="muted">Mean predicted risk for the 2025 season on the native H3 hex grid. The 40
+        highest-risk cells are outlined in white; after verification, any that burned turn green.
+        Click any hexagon for its prediction.</p>
+      <div class="mapwrap">
+        <div id="tr-map"></div>
+        <div id="tr-legend" class="legend"></div>
       </div>
     </div>
 
@@ -281,10 +289,10 @@
 </footer>
 
 <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="data/meta.js?v=8"></script>
-<script src="data/cells.js?v=8"></script>
+<script src="data/meta.js?v=9"></script>
+<script src="data/cells.js?v=9"></script>
 <script src="data/predictions.js"></script>
-<script src="paper.js?v=8"></script>
-<script src="app.js?v=8"></script>
+<script src="paper.js?v=9"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

@@ -196,6 +196,7 @@ table.t.click tr{cursor:pointer} table.t.click tr:hover td{background:var(--bg2)
 .fc-maplayout{display:grid;grid-template-columns:1.4fr 1fr;gap:14px;align-items:start}
 @media(max-width:860px){.fc-maplayout{grid-template-columns:1fr}}
 #fc-map{height:500px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#0b0e12;position:relative}
+#tr-map{height:520px;background:#0b0e12}
 .panel.inset{margin:0;background:var(--bg2)}
 .panel.inset h4{margin-top:14px}
 

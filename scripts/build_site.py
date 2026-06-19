@@ -266,7 +266,8 @@ def build(cfg) -> dict:
 
     # ---- weekly forecast (next-season climatological prediction) ----
     print("   generating weekly forecast (this takes ~1 min) ...")
-    forecast = build_forecast(cfg, feats, surf, geom, site, target_year=2025)
+    forecast = build_forecast(cfg, feats, surf, geom, site, target_year=2025,
+                              cell_order=[c["id"] for c in cells])
     # Lock the predictions to disk so the Tracker tab can compare against actuals later.
     # Preserve a prior lock time and any pulled actuals for the same year — a rebuild
     # of the site must not silently reset the lock or discard verified actuals.
@@ -289,7 +290,7 @@ def build(cfg) -> dict:
         "districts_geo": districts_geo, "ecoregions_geo": eco_geo,
         "cnn": cnn["test_metrics"] if cnn else None, "cnn_backbone": cnn["backbone"] if cnn else None,
         "ecoregions": eco_rows, "state_fires_by_year": state_fby, "surfaces": surfaces,
-        "grid": build_grid_layer(cells, SURFACE_METRICS),
+        "hexes": build_hex_layer(cells, SURFACE_METRICS),
         "cities": [{"name": n, "lat": lat, "lon": lon, "pop": pop} for n, lat, lon, pop in OREGON_CITIES],
         "forecast": forecast,
         "predictions": json.loads((site / "data" / "predictions.json").read_text())
@@ -324,72 +325,55 @@ def surf_value(rec, key):
     return np.nan if v is None else v
 
 
-def build_grid_layer(cells, metrics, dlat=0.07):
-    """Bin the per-cell records onto a regular square lattice for the map.
+def build_hex_layer(cells, metrics):
+    """True H3 hexagon outlines for the map, aligned by index to ``WF_CELLS.cells``.
 
-    The native grid is H3 hexagons, but a regular square lattice draws as crisp,
-    clearly-bordered, clickable tiles (no blurry interpolation). Each square holds
-    the per-metric mean of the cells inside it, normalized 0–1 against the same
-    2nd–98th percentile range the legend uses, plus the index of a representative
-    cell so a click can open that cell's full detail.
+    The native grid IS H3 hexagons, so every cell is drawn as its own hexagon and a
+    click lands on exactly one cell — no re-binning, no nearest-neighbour guessing.
+    For each cell we ship the six boundary vertices (lat, lon). Colouring is done in
+    the browser straight from the raw per-cell metric values, normalised against the
+    same 2nd–98th percentile range the legend uses, so we only need to ship those
+    bounds once per metric rather than a value per cell.
 
-    Returns a compact dict: ``{dlat, dlon, metrics, cells:[[lat,lon,repIdx,*norm]]}``.
+    Returns ``{metrics, lohi:{metric:[lo,hi]}, poly:[[[lat,lon]*6], ...]}``.
     """
-    keys = [m[0] for m in metrics]
-    lons = np.array([c["lon"] for c in cells], float)
-    lats = np.array([c["lat"] for c in cells], float)
-    raw = {k: np.array([surf_value(c, k) for c in cells], float) for k in keys}
+    import h3
 
+    keys = [m[0] for m in metrics]
+    raw = {k: np.array([surf_value(c, k) for c in cells], float) for k in keys}
     lohi = {}
     for k in keys:
         v = raw[k][np.isfinite(raw[k])]
-        lohi[k] = (float(np.nanpercentile(v, 2)), float(np.nanpercentile(v, 98))) if len(v) else (0.0, 1.0)
+        lo, hi = (float(np.nanpercentile(v, 2)), float(np.nanpercentile(v, 98))) if len(v) else (0.0, 1.0)
+        lohi[k] = [round(lo, 5), round(hi, 5)]
 
-    # Square-on-screen tiles: stretch longitude by 1/cos(lat) at Oregon's latitude.
-    midlat = float(np.median(lats))
-    dlon = dlat / max(0.3, np.cos(np.radians(midlat)))
-    minlon, minlat = float(lons.min()), float(lats.min())
-    bi = np.floor((lons - minlon) / dlon).astype(int)
-    bj = np.floor((lats - minlat) / dlat).astype(int)
-
-    bins: dict[tuple[int, int], list[int]] = {}
-    for idx in range(len(cells)):
-        bins.setdefault((int(bi[idx]), int(bj[idx])), []).append(idx)
-
-    out = []
-    for (i, j), members in bins.items():
-        m = np.array(members)
-        clat = minlat + (j + 0.5) * dlat
-        clon = minlon + (i + 0.5) * dlon
-        d = (lons[m] - clon) ** 2 + (lats[m] - clat) ** 2
-        rep = int(m[int(d.argmin())])
-        row = [round(clat, 4), round(clon, 4), rep]
-        for k in keys:
-            vals = raw[k][m]
-            vals = vals[np.isfinite(vals)]
-            if not len(vals):
-                row.append(None)
-            else:
-                lo, hi = lohi[k]
-                row.append(round(min(1.0, max(0.0, (float(vals.mean()) - lo) / (hi - lo + 1e-12))), 3))
-        out.append(row)
-    return {"dlat": round(dlat, 4), "dlon": round(dlon, 4), "metrics": keys, "cells": out}
+    poly = []
+    for c in cells:
+        boundary = h3.cell_to_boundary(c["id"])  # [(lat, lon), ...] six vertices
+        poly.append([[round(lat, 4), round(lon, 4)] for lat, lon in boundary])
+    return {"metrics": keys, "lohi": lohi, "poly": poly}
 
 
 def _week_label(d):
     return d.strftime("%b %d")
 
 
-def build_forecast(cfg, feats, surf, geom, site, target_year=2025):
-    """Predict next-season weekly risk for every cell, write surfaces + summary.
+def build_forecast(cfg, feats, surf, geom, site, target_year=2025, cell_order=None):
+    """Predict next-season weekly risk for every cell, with per-cell hex data + summary.
 
     Approach: for each fire-season week of ``target_year`` we use **per-cell
     climatology** of every input feature (the historical mean for that
     week-of-year across all training years), feed it through the trained risk model,
-    and render the resulting cell-wise risk as a smooth IDW surface. This is an
-    honest "expected risk under typical conditions for week W" forecast — the only
-    leverage we have without a real weather forecast, and it tracks the seasonal
-    arc clearly. Plus precomputed totals (state + per district).
+    and read the resulting cell-wise risk. This is an "expected risk under typical
+    conditions for week W" forecast — the only leverage we have without a real
+    weather forecast, and it tracks the seasonal arc clearly. Plus precomputed
+    totals (state + per district).
+
+    For the map we ship the per-cell risk of every week as small integers (0–100,
+    normalised against the season-wide max so weeks compare directly), aligned by
+    index to ``cell_order`` (the same order as ``WF_CELLS.cells`` / the hex layer),
+    so the Forecast tab can recolour the real hexagons week by week and a click
+    lands on exactly one cell.
     """
     from wildfire.features.build import feature_columns
     from wildfire.models import risk as risk_mod
@@ -409,10 +393,14 @@ def build_forecast(cfg, feats, surf, geom, site, target_year=2025):
     forecast_dates = [d for d in all_mondays if d.month in season_months]
 
     cells_df = surf[["cell_id", "lon", "lat", "ecoregion"]].copy()
-    forecast_dir = site / "assets" / "forecast"
-    forecast_dir.mkdir(parents=True, exist_ok=True)
+
+    # Map each cell id to its column in the shipped hex layer (same order as the
+    # site's WF_CELLS.cells), so the per-week risk arrays line up with the hexes.
+    pos = {cid: i for i, cid in enumerate(cell_order)} if cell_order else {}
+    n_cells = len(cell_order) if cell_order else 0
 
     weekly = []  # one entry per forecast week
+    weeks_hex = []  # per-week list of n_cells ints 0-100 (risk / season-max)
     cell_risk_acc = {cid: 0.0 for cid in cells_df["cell_id"]}
     cell_risk_n = 0
 
@@ -443,20 +431,20 @@ def build_forecast(cfg, feats, surf, geom, site, target_year=2025):
 
     vmax_global = max((s[3].max() for s in week_scores.values()), default=1.0)
     for d, (cids, lons, lats, scores) in week_scores.items():
-        png = forecast_dir / f"week_{d.strftime('%Y-%m-%d')}.png"
-        _surface_fixed(lons, lats, scores, geom, png, "inferno", vmax=vmax_global)
-        for cid, s in zip(cids, scores):
-            cell_risk_acc[cid] = cell_risk_acc.get(cid, 0.0) + float(s)
-        cell_risk_n += 1
-        # district aggregates
+        col = [0] * n_cells  # this week's per-cell risk for the hex map
         dist_exp = {}
         for cid, s in zip(cids, scores):
+            cell_risk_acc[cid] = cell_risk_acc.get(cid, 0.0) + float(s)
+            j = pos.get(cid)
+            if j is not None:
+                col[j] = int(round(float(s) / (vmax_global + 1e-12) * 100))
             dist = dmap.get(cid, "Outside ODF protection")
             dist_exp[dist] = dist_exp.get(dist, 0.0) + float(s)
+        cell_risk_n += 1
+        weeks_hex.append(col)
         weekly.append({
             "date": d.strftime("%Y-%m-%d"),
             "label": _week_label(d),
-            "png": f"assets/forecast/{png.name}",
             "expected_state": round(float(scores.sum()), 1),
             "max_risk": round(float(scores.max()) * 100, 2),
             "mean_risk": round(float(scores.mean()) * 100, 3),
@@ -467,6 +455,15 @@ def build_forecast(cfg, feats, surf, geom, site, target_year=2025):
     mean_risk = {cid: cell_risk_acc[cid] / max(1, cell_risk_n) for cid in cells_df["cell_id"]}
     cells_df["pred_risk"] = cells_df["cell_id"].map(mean_risk)
     cells_df["pct"] = cells_df["pred_risk"].rank(pct=True)
+
+    # Per-cell seasonal mean as 0-100 ints (normalised to the season max) for the
+    # Tracker map, aligned to the hex layer / cell order.
+    season_max = max(mean_risk.values()) if mean_risk else 1.0
+    season_hex = [0] * n_cells
+    for cid, v in mean_risk.items():
+        j = pos.get(cid)
+        if j is not None:
+            season_hex[j] = int(round(float(v) / (season_max + 1e-12) * 100))
 
     top_cells = []
     for _, r in cells_df.sort_values("pred_risk", ascending=False).head(40).iterrows():
@@ -492,6 +489,14 @@ def build_forecast(cfg, feats, surf, geom, site, target_year=2025):
         "weeks": weekly,
         "next_week": weekly[0] if weekly else None,
         "vmax_pct": round(float(vmax_global) * 100, 2),
+        "hex": {
+            # weeks[w][cellIdx] and season[cellIdx] are 0-100 ints aligned to the
+            # hex layer; multiply by the matching *_pct max to recover a risk %.
+            "vmax_pct": round(float(vmax_global) * 100, 2),
+            "season_max_pct": round(float(season_max) * 100, 3),
+            "weeks": weeks_hex,
+            "season": season_hex,
+        },
         "predicted": {
             "state_expected_fires": round(state_total, 0),
             "districts": district_total,
@@ -501,33 +506,6 @@ def build_forecast(cfg, feats, surf, geom, site, target_year=2025):
         },
     }
     return forecast_info
-
-
-def _surface_fixed(lons, lats, vals, geom, out_png, cmap_name, vmax, res=(900, 820)):
-    """IDW surface with a FIXED max for comparability across weeks."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.cm as cm
-    import matplotlib.pyplot as plt
-    from scipy.spatial import cKDTree
-
-    minx, miny, maxx, maxy = geom.bounds
-    W, H = res
-    xs = np.linspace(minx, maxx, W)
-    ys = np.linspace(maxy, miny, H)
-    gx, gy = np.meshgrid(xs, ys)
-    tree = cKDTree(np.c_[lons, lats])
-    k = min(14, len(lons))
-    dist, idx = tree.query(np.c_[gx.ravel(), gy.ravel()], k=k)
-    w = 1.0 / (dist ** 2 + 1e-9)
-    interp = (w * vals[idx]).sum(1) / w.sum(1)
-    grid = interp.reshape(H, W)
-    norm = np.clip(grid / (vmax + 1e-12), 0, 1)
-    cmap = cm.get_cmap(cmap_name)
-    rgba = (cmap(norm) * 255).astype(np.uint8)
-    rgba[..., 3] = np.where(_poly_mask(gx, gy, geom), 215, 0).astype(np.uint8)
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    plt.imsave(out_png, rgba)
 
 
 def _regen_shap_figure(shap, site):
