@@ -44,18 +44,22 @@ jobs:
           enable-cache: true
 
       - name: Set up Python 3.10
-        run: uv python install 3.10
+        run: uv python install 3.10 --python-preference only-managed
 
       - name: Install project (core deps only — no CNN extra needed)
-        run: uv sync
+        run: uv sync --no-extra cnn
+
+      - name: Create GEE cache directory
+        run: mkdir -p data/interim/_gee_cache
 
       - name: Cache GEE per-timestep pulls
         # The pull is checkpointed to data/interim/_gee_cache; persist across runs so
         # the action only refreshes timesteps it hasn't seen.
+        continue-on-error: true  # a cold cache is fine — just means a full pull
         uses: actions/cache@v4
         with:
           path: data/interim/_gee_cache
-          key: gee-cache-${{ github.event.inputs.year || '2025' }}
+          key: gee-cache-2025
           restore-keys: |
             gee-cache-
 
