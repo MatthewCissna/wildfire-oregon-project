@@ -60,10 +60,11 @@ That's it — the `pages.yml` workflow will deploy on the next push.
    - **Description:** "GitHub Actions runner for Earth Engine pulls"
    - Click **Create and continue**.
 
-3. **Grant this service account access** — give it the role:
-   - **Earth Engine Resource Viewer** (sufficient for queries)
-   - (Optional, only if you ever export tables to Drive from CI:
-     also add **Service Usage Consumer**.)
+3. **Grant this service account access** — give it **both** roles:
+   - **Earth Engine Resource Viewer** (read Earth Engine data), and
+   - **Service Usage Consumer** (**required** — lets the service account bill API
+     calls to the project; without it Earth Engine returns
+     `403 USER_PROJECT_DENIED`).
 
    Click **Continue** then **Done**.
 
@@ -141,7 +142,7 @@ runs automatically every Monday morning during fire season.
 | Symptom | Fix |
 |---|---|
 | `Earth Engine failed to initialize` in the Action log | The service account isn't registered with EE (Step 3 end). Re-do the registration page. |
-| `403 Permission denied` on the EE call | The service account needs **Earth Engine Resource Viewer** role on the project (Step 3.3). |
+| `403 Permission denied` / `USER_PROJECT_DENIED` on the EE call | The service account is missing the **Service Usage Consumer** role (and/or **Earth Engine Resource Viewer**) on the project. Add it at <https://console.cloud.google.com/iam-admin/iam> (Step 3.3), wait ~2 min for propagation, re-run. |
 | `EE_SERVICE_ACCOUNT_KEY is set but couldn't be decoded as base64 JSON` | Re-run the base64 command; check you copied the **whole** string with no newlines. |
 | `Invalid leading whitespace ... in header value: '\t***'` during `ee.Initialize` | A stray space/tab/newline snuck into the **`EE_PROJECT`** secret. The code now strips it automatically, but to be safe delete & re-add `EE_PROJECT` with the value exactly `wildfire-prediction-499606` (no surrounding spaces). |
 | Pages deploy fails: "Resource not accessible" | In Settings → Pages, source must be **GitHub Actions**, not "Deploy from branch". |
