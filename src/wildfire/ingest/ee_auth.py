@@ -47,13 +47,6 @@ def initialize_ee(cfg: Config | None = None, *, force: bool = False) -> str:
     """
     global _INITIALIZED
     cfg = cfg or load_config()
-    project = cfg.ee_project
-    if not project:
-        raise EarthEngineNotConfigured(
-            "No Earth Engine project configured. Set earth_engine.project_id in "
-            "configs/config.yaml (or the EE_PROJECT env var), or run with --synthetic. "
-            "See docs/earth_engine_setup.md."
-        )
 
     try:
         import ee  # noqa: WPS433  (import here so the rest of the repo doesn't require EE)
@@ -62,6 +55,22 @@ def initialize_ee(cfg: Config | None = None, *, force: bool = False) -> str:
             "earthengine-api is not installed. Run `uv sync`."
         ) from exc
 
+    # Headless path: service-account credentials supplied via env var. The JSON also
+    # carries a clean ``project_id`` — prefer it over the hand-entered EE_PROJECT secret
+    # so a stray space/tab pasted into that secret can't corrupt the
+    # ``x-goog-user-project`` header ("Invalid leading whitespace ... in header value").
+    creds, sa_project = _service_account_credentials()
+
+    project = sa_project or cfg.ee_project
+    if isinstance(project, str):
+        project = project.strip()
+    if not project:
+        raise EarthEngineNotConfigured(
+            "No Earth Engine project configured. Set earth_engine.project_id in "
+            "configs/config.yaml (or the EE_PROJECT env var), or run with --synthetic. "
+            "See docs/earth_engine_setup.md."
+        )
+
     if _INITIALIZED and not force:
         return project
 
@@ -69,8 +78,6 @@ def initialize_ee(cfg: Config | None = None, *, force: bool = False) -> str:
     if cfg.get("earth_engine.use_highvolume", True):
         init_kwargs["opt_url"] = _HIGHVOLUME_URL
 
-    # Headless path: service-account credentials supplied via env var.
-    creds = _service_account_credentials()
     if creds is not None:
         init_kwargs["credentials"] = creds
 
@@ -92,18 +99,23 @@ def initialize_ee(cfg: Config | None = None, *, force: bool = False) -> str:
 
 
 def _service_account_credentials():
-    """Return ``ee.ServiceAccountCredentials`` if a service-account key env var is set.
+    """Return ``(ee.ServiceAccountCredentials, project_id)`` from a service-account key.
+
+    Returns ``(None, None)`` if no service-account env var is set (local/interactive).
 
     Accepted env vars (first wins):
         EE_SERVICE_ACCOUNT_KEY   base64-encoded service-account JSON
         EE_SERVICE_ACCOUNT_FILE  filesystem path to the service-account JSON
+
+    The JSON's own ``project_id`` is returned so callers can use it instead of the
+    separately-pasted ``EE_PROJECT`` secret (which is prone to stray whitespace).
     """
     import ee
 
     key_b64 = os.environ.get("EE_SERVICE_ACCOUNT_KEY")
     key_file = os.environ.get("EE_SERVICE_ACCOUNT_FILE")
     if not (key_b64 or key_file):
-        return None
+        return None, None
 
     if key_b64:
         try:
@@ -127,8 +139,11 @@ def _service_account_credentials():
     email = payload.get("client_email")
     if not email:
         raise RuntimeError("Service-account JSON has no client_email field.")
+    sa_project = payload.get("project_id")
+    if isinstance(sa_project, str):
+        sa_project = sa_project.strip() or None
     logger.info("Using Earth Engine service account: %s", email)
-    return ee.ServiceAccountCredentials(email, key_file)
+    return ee.ServiceAccountCredentials(email, key_file), sa_project
 
 
 def ee_available(cfg: Config | None = None) -> bool:
