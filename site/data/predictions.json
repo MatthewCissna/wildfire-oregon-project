@@ -552,5 +552,372 @@
       }
     ]
   },
-  "actuals": null
+  "actuals": {
+    "verified_at_utc": "2026-06-19T04:25:56.140446+00:00",
+    "target_year": 2025,
+    "state_actual_fires": 2176,
+    "districts": [
+      {
+        "district": "Outside ODF protection",
+        "actual_fires": 1201
+      },
+      {
+        "district": "Central Oregon",
+        "actual_fires": 174
+      },
+      {
+        "district": "Klamath-Lake",
+        "actual_fires": 161
+      },
+      {
+        "district": "Northwest Oregon",
+        "actual_fires": 132
+      },
+      {
+        "district": "Douglas FPA",
+        "actual_fires": 127
+      },
+      {
+        "district": "South Cascade",
+        "actual_fires": 112
+      },
+      {
+        "district": "Coos FPA",
+        "actual_fires": 75
+      },
+      {
+        "district": "West Oregon",
+        "actual_fires": 53
+      },
+      {
+        "district": "Southwest Oregon",
+        "actual_fires": 42
+      },
+      {
+        "district": "Northeast Oregon",
+        "actual_fires": 39
+      },
+      {
+        "district": "North Cascade",
+        "actual_fires": 36
+      },
+      {
+        "district": "Western Lane",
+        "actual_fires": 20
+      },
+      {
+        "district": "Walker Range FPA",
+        "actual_fires": 4
+      }
+    ],
+    "top_cells": [
+      {
+        "id": "8628a9af7ffffff",
+        "predicted": 10.354,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "8628a9aafffffff",
+        "predicted": 9.902,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "86288c58fffffff",
+        "predicted": 8.854,
+        "actual_weeks_burned": 9
+      },
+      {
+        "id": "8628a9ac7ffffff",
+        "predicted": 8.817,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "8628a9ad7ffffff",
+        "predicted": 8.548,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "8628f6d67ffffff",
+        "predicted": 8.072,
+        "actual_weeks_burned": 1
+      },
+      {
+        "id": "86288c587ffffff",
+        "predicted": 7.939,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "8628f4287ffffff",
+        "predicted": 7.764,
+        "actual_weeks_burned": 10
+      },
+      {
+        "id": "862888967ffffff",
+        "predicted": 7.704,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288c4a7ffffff",
+        "predicted": 7.415,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "8628f429fffffff",
+        "predicted": 7.375,
+        "actual_weeks_burned": 6
+      },
+      {
+        "id": "86288c2cfffffff",
+        "predicted": 7.349,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "8628a9a1fffffff",
+        "predicted": 7.297,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "862888d1fffffff",
+        "predicted": 7.222,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "8628a96cfffffff",
+        "predicted": 7.129,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "86288c6e7ffffff",
+        "predicted": 7.123,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "862888dafffffff",
+        "predicted": 7.12,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288c657ffffff",
+        "predicted": 7.037,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "86288c60fffffff",
+        "predicted": 6.981,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288c6f7ffffff",
+        "predicted": 6.958,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "862888d17ffffff",
+        "predicted": 6.951,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "8628f44b7ffffff",
+        "predicted": 6.852,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86281e68fffffff",
+        "predicted": 6.781,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "86288c61fffffff",
+        "predicted": 6.689,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "862888d47ffffff",
+        "predicted": 6.67,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288c25fffffff",
+        "predicted": 6.658,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288c5b7ffffff",
+        "predicted": 6.639,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288c6d7ffffff",
+        "predicted": 6.6,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288c6efffffff",
+        "predicted": 6.599,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288d5a7ffffff",
+        "predicted": 6.596,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288c65fffffff",
+        "predicted": 6.586,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "86281e6b7ffffff",
+        "predicted": 6.529,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "86288c5afffffff",
+        "predicted": 6.463,
+        "actual_weeks_burned": 1
+      },
+      {
+        "id": "86288c5a7ffffff",
+        "predicted": 6.176,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "8628f42b7ffffff",
+        "predicted": 6.163,
+        "actual_weeks_burned": 10
+      },
+      {
+        "id": "8628889a7ffffff",
+        "predicted": 6.156,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "86288c64fffffff",
+        "predicted": 6.081,
+        "actual_weeks_burned": 5
+      },
+      {
+        "id": "86288c607ffffff",
+        "predicted": 5.999,
+        "actual_weeks_burned": 1
+      },
+      {
+        "id": "86288c6c7ffffff",
+        "predicted": 5.988,
+        "actual_weeks_burned": 0
+      },
+      {
+        "id": "86288c6cfffffff",
+        "predicted": 5.987,
+        "actual_weeks_burned": 0
+      }
+    ],
+    "top_cell_hit_count": 20,
+    "weekly_curve": [
+      {
+        "date": "2025-05-05",
+        "actual": 37
+      },
+      {
+        "date": "2025-05-12",
+        "actual": 18
+      },
+      {
+        "date": "2025-05-19",
+        "actual": 25
+      },
+      {
+        "date": "2025-05-26",
+        "actual": 50
+      },
+      {
+        "date": "2025-06-02",
+        "actual": 29
+      },
+      {
+        "date": "2025-06-09",
+        "actual": 34
+      },
+      {
+        "date": "2025-06-16",
+        "actual": 33
+      },
+      {
+        "date": "2025-06-23",
+        "actual": 34
+      },
+      {
+        "date": "2025-06-30",
+        "actual": 111
+      },
+      {
+        "date": "2025-07-07",
+        "actual": 101
+      },
+      {
+        "date": "2025-07-14",
+        "actual": 109
+      },
+      {
+        "date": "2025-07-21",
+        "actual": 83
+      },
+      {
+        "date": "2025-07-28",
+        "actual": 129
+      },
+      {
+        "date": "2025-08-04",
+        "actual": 55
+      },
+      {
+        "date": "2025-08-11",
+        "actual": 59
+      },
+      {
+        "date": "2025-08-18",
+        "actual": 66
+      },
+      {
+        "date": "2025-08-25",
+        "actual": 54
+      },
+      {
+        "date": "2025-09-01",
+        "actual": 167
+      },
+      {
+        "date": "2025-09-08",
+        "actual": 127
+      },
+      {
+        "date": "2025-09-15",
+        "actual": 132
+      },
+      {
+        "date": "2025-09-22",
+        "actual": 137
+      },
+      {
+        "date": "2025-09-29",
+        "actual": 179
+      },
+      {
+        "date": "2025-10-06",
+        "actual": 71
+      },
+      {
+        "date": "2025-10-13",
+        "actual": 82
+      },
+      {
+        "date": "2025-10-20",
+        "actual": 105
+      },
+      {
+        "date": "2025-10-27",
+        "actual": 149
+      }
+    ]
+  }
 }
