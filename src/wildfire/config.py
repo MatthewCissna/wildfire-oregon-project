@@ -55,8 +55,17 @@ class Config:
 
     @property
     def ee_project(self) -> str | None:
-        """Earth Engine Cloud project ID. EE_PROJECT env var overrides the YAML."""
-        return os.environ.get("EE_PROJECT") or self.get("earth_engine.project_id")
+        """Earth Engine Cloud project ID. EE_PROJECT env var overrides the YAML.
+
+        The value is stripped of surrounding whitespace — a stray space/tab/newline
+        (easy to introduce when pasting into a GitHub Secret) otherwise lands in the
+        ``x-goog-user-project`` HTTP header and makes ``requests`` reject the call
+        ("Invalid leading whitespace ... in header value").
+        """
+        value = os.environ.get("EE_PROJECT") or self.get("earth_engine.project_id")
+        if isinstance(value, str):
+            value = value.strip()
+        return value or None
 
     def path_for(self, key: str) -> Path:
         """Resolve a configured path (under ``paths:``) to an absolute Path."""

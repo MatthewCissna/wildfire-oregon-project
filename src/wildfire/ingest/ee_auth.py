@@ -107,7 +107,8 @@ def _service_account_credentials():
 
     if key_b64:
         try:
-            raw = base64.b64decode(key_b64).decode("utf-8")
+            # Strip any whitespace/newlines a copy-paste into a GitHub Secret may add.
+            raw = base64.b64decode("".join(key_b64.split())).decode("utf-8")
             payload = json.loads(raw)
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(
