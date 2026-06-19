@@ -268,12 +268,17 @@ def build(cfg) -> dict:
     print("   generating weekly forecast (this takes ~1 min) ...")
     forecast = build_forecast(cfg, feats, surf, geom, site, target_year=2025)
     # Lock the predictions to disk so the Tracker tab can compare against actuals later.
+    # Preserve a prior lock time and any pulled actuals for the same year — a rebuild
+    # of the site must not silently reset the lock or discard verified actuals.
     locked_path = site / "data" / "predictions.json"
+    prior = json.loads(locked_path.read_text()) if locked_path.exists() else {}
+    same_year = prior.get("target_year") == forecast["target_year"]
     locked_path.write_text(json.dumps({
-        "locked_at_utc": pd.Timestamp.utcnow().isoformat(),
+        "locked_at_utc": prior["locked_at_utc"] if (same_year and prior.get("locked_at_utc"))
+        else pd.Timestamp.utcnow().isoformat(),
         "target_year": forecast["target_year"],
         "predicted": forecast["predicted"],
-        "actuals": None,  # populated by scripts/verify_predictions.py when data arrives
+        "actuals": prior.get("actuals") if same_year else None,
     }, indent=2))
 
     meta = {
@@ -284,6 +289,7 @@ def build(cfg) -> dict:
         "districts_geo": districts_geo, "ecoregions_geo": eco_geo,
         "cnn": cnn["test_metrics"] if cnn else None, "cnn_backbone": cnn["backbone"] if cnn else None,
         "ecoregions": eco_rows, "state_fires_by_year": state_fby, "surfaces": surfaces,
+        "grid": build_grid_layer(cells, SURFACE_METRICS),
         "cities": [{"name": n, "lat": lat, "lon": lon, "pop": pop} for n, lat, lon, pop in OREGON_CITIES],
         "forecast": forecast,
         "predictions": json.loads((site / "data" / "predictions.json").read_text())
@@ -316,6 +322,58 @@ def surf_value(rec, key):
         return np.nan
     v = rec.get(key)
     return np.nan if v is None else v
+
+
+def build_grid_layer(cells, metrics, dlat=0.07):
+    """Bin the per-cell records onto a regular square lattice for the map.
+
+    The native grid is H3 hexagons, but a regular square lattice draws as crisp,
+    clearly-bordered, clickable tiles (no blurry interpolation). Each square holds
+    the per-metric mean of the cells inside it, normalized 0–1 against the same
+    2nd–98th percentile range the legend uses, plus the index of a representative
+    cell so a click can open that cell's full detail.
+
+    Returns a compact dict: ``{dlat, dlon, metrics, cells:[[lat,lon,repIdx,*norm]]}``.
+    """
+    keys = [m[0] for m in metrics]
+    lons = np.array([c["lon"] for c in cells], float)
+    lats = np.array([c["lat"] for c in cells], float)
+    raw = {k: np.array([surf_value(c, k) for c in cells], float) for k in keys}
+
+    lohi = {}
+    for k in keys:
+        v = raw[k][np.isfinite(raw[k])]
+        lohi[k] = (float(np.nanpercentile(v, 2)), float(np.nanpercentile(v, 98))) if len(v) else (0.0, 1.0)
+
+    # Square-on-screen tiles: stretch longitude by 1/cos(lat) at Oregon's latitude.
+    midlat = float(np.median(lats))
+    dlon = dlat / max(0.3, np.cos(np.radians(midlat)))
+    minlon, minlat = float(lons.min()), float(lats.min())
+    bi = np.floor((lons - minlon) / dlon).astype(int)
+    bj = np.floor((lats - minlat) / dlat).astype(int)
+
+    bins: dict[tuple[int, int], list[int]] = {}
+    for idx in range(len(cells)):
+        bins.setdefault((int(bi[idx]), int(bj[idx])), []).append(idx)
+
+    out = []
+    for (i, j), members in bins.items():
+        m = np.array(members)
+        clat = minlat + (j + 0.5) * dlat
+        clon = minlon + (i + 0.5) * dlon
+        d = (lons[m] - clon) ** 2 + (lats[m] - clat) ** 2
+        rep = int(m[int(d.argmin())])
+        row = [round(clat, 4), round(clon, 4), rep]
+        for k in keys:
+            vals = raw[k][m]
+            vals = vals[np.isfinite(vals)]
+            if not len(vals):
+                row.append(None)
+            else:
+                lo, hi = lohi[k]
+                row.append(round(min(1.0, max(0.0, (float(vals.mean()) - lo) / (hi - lo + 1e-12))), 3))
+        out.append(row)
+    return {"dlat": round(dlat, 4), "dlon": round(dlon, 4), "metrics": keys, "cells": out}
 
 
 def _week_label(d):

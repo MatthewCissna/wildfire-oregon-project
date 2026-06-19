@@ -77,8 +77,9 @@
     $("#foot-meta").textContent = `source: ${META.manifest.source} · ${(META.manifest.positive_rate * 100).toFixed(2)}% positive`;
   }
 
-  /* ---------- risk map (simplified, click-only) ---------- */
-  let map, overlay, cityLayer, distOutline, marker, state = { metric: "risk" };
+  /* ---------- risk map (crisp vector tiles, click-only) ---------- */
+  const GRID_BORDER = "rgba(6,9,13,.5)";
+  let map, gridLayer, gridRects = [], cityLayer, distOutline, marker, state = { metric: "risk" };
   function initMap() {
     if (map) return;
     if (typeof L === "undefined") {
@@ -90,21 +91,48 @@
 
     const sel = $("#metric");
     sel.innerHTML = Object.entries(SURF.metrics).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join("");
+    buildGrid();
     setSurface("risk");
     sel.addEventListener("change", e => setSurface(e.target.value));
     $("#citiesToggle").addEventListener("change", e => toggleCities(e.target.checked));
     $("#distToggle").addEventListener("change", e => toggleDistricts(e.target.checked));
 
     toggleCities(true);
-    // Click anywhere on the map: snap to nearest cell, populate detail. No mousemove (zero lag).
+    // Click in a gap between tiles: still snap to the nearest cell.
     map.on("click", e => { const c = nearest(e.latlng.lat, e.latlng.lng); selectCell(c); });
   }
+  // Draw the square lattice once as canvas rectangles; recolor on metric change.
+  function buildGrid() {
+    const G = META.grid;
+    if (!G) return;
+    const renderer = L.canvas({ padding: 0.5 });
+    gridLayer = L.layerGroup();
+    const hy = G.dlat / 2, hx = G.dlon / 2;
+    G.cells.forEach(row => {
+      const lat = row[0], lon = row[1], rep = row[2];
+      const rect = L.rectangle([[lat - hy, lon - hx], [lat + hy, lon + hx]], {
+        renderer, weight: 0.5, color: GRID_BORDER, fillColor: "#222", fillOpacity: 0.85,
+      });
+      rect._vals = row.slice(3);
+      rect.on("click", e => { L.DomEvent.stopPropagation(e); selectCell(CELLS[rep]); });
+      rect.on("mouseover", () => rect.setStyle({ weight: 1.6, color: "#fff" }));
+      rect.on("mouseout", () => rect.setStyle({ weight: 0.5, color: GRID_BORDER }));
+      gridRects.push(rect);
+      gridLayer.addLayer(rect);
+    });
+    gridLayer.addTo(map);
+  }
   function setSurface(metric) {
-    state.metric = metric; const m = SURF.metrics[metric];
-    if (overlay) map.removeLayer(overlay);
-    overlay = L.imageOverlay(m.png, SURF.bounds, { opacity: 0.85, interactive: false }).addTo(map);
+    state.metric = metric;
+    const m = SURF.metrics[metric], mi = META.grid ? META.grid.metrics.indexOf(metric) : -1;
+    gridRects.forEach(rect => {
+      const v = rect._vals[mi];
+      if (v == null) rect.setStyle({ fillOpacity: 0, stroke: false });
+      else rect.setStyle({ fillColor: rampFromStops(m.stops, v), fillOpacity: 0.85, stroke: true, weight: 0.5, color: GRID_BORDER });
+    });
     if (cityLayer) cityLayer.eachLayer(l => l.bringToFront && l.bringToFront());
     if (distOutline) distOutline.bringToFront();
+    if (marker) marker.bringToFront();
     drawLegend(m, "#legend");
   }
   function drawLegend(m, sel) {
@@ -144,7 +172,7 @@
   function selectCell(c) {
     if (!c) return;
     if (marker) map.removeLayer(marker);
-    marker = L.circleMarker([c.lat, c.lon], { radius: 9, color: "#fff", weight: 2, fillColor: "#ff7a18", fillOpacity: .9 }).addTo(map);
+    marker = L.circleMarker([c.lat, c.lon], { radius: 9, color: "#fff", weight: 2, fillColor: "#e8742b", fillOpacity: .9 }).addTo(map);
     showDetail(c);
   }
 
@@ -286,12 +314,12 @@
     [0, .5, 1].forEach(g => { const y = pad.t + ih * (1 - g);
       html += `<line x1="${pad.l}" y1="${y}" x2="${w - pad.r}" y2="${y}" stroke="#2b3440"/>
                <text x="${pad.l - 5}" y="${y + 3}" fill="#6b7785" font-size="10" text-anchor="end">${Math.round(max * g)}</text>`; });
-    html += `<path d="${path(pred)}" fill="none" stroke="#ff7a18" stroke-width="2.2"/>`;
+    html += `<path d="${path(pred)}" fill="none" stroke="#e8742b" stroke-width="2.2"/>`;
     if (actual) html += `<path d="${path(actual)}" fill="none" stroke="#7fd1ff" stroke-width="2.2" stroke-dasharray="4 3"/>`;
     labels.forEach((l, i) => { if (i % 4 === 0) html += `<text x="${sx(i)}" y="${h - 6}" fill="#6b7785" font-size="10" text-anchor="middle">${l}</text>`; });
     html += `<g font-size="11" fill="#cdd7e0">
       <rect x="${w - 200}" y="6" width="194" height="22" fill="#161b22" stroke="#2b3440" rx="4"/>
-      <line x1="${w - 192}" y1="17" x2="${w - 172}" y2="17" stroke="#ff7a18" stroke-width="2.2"/>
+      <line x1="${w - 192}" y1="17" x2="${w - 172}" y2="17" stroke="#e8742b" stroke-width="2.2"/>
       <text x="${w - 168}" y="20">predicted</text>
       <line x1="${w - 110}" y1="17" x2="${w - 90}" y2="17" stroke="#7fd1ff" stroke-width="2.2" stroke-dasharray="4 3"/>
       <text x="${w - 86}" y="20">${actual ? "actual" : "(awaiting)"}</text></g>`;

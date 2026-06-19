@@ -3,18 +3,23 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Oregon Wildfire ML — Interactive Atlas</title>
+<title>Oregon Wildfire ML · Interactive Atlas</title>
 <link rel="preconnect" href="https://unpkg.com" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="flame">▲</span>
+    <span class="flame" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3c2.5 3 4.5 5.2 4.5 8.3a4.5 4.5 0 0 1-9 0C7.5 9.4 8.6 8 10 7c.1 1.6.9 2.4 2 2.8.6-2.3-.2-4.4 0-6.8Z"/>
+      </svg>
+    </span>
     <div>
       <h1>Oregon Wildfire&nbsp;ML</h1>
-      <p class="sub">Interactive atlas · risk, fire counts &amp; satellite detection · 2001–2024</p>
+      <p class="sub">Risk surface, fire-count forecasts and satellite burn-scar detection · 2001–2024</p>
     </div>
   </div>
   <nav class="tabs" id="tabs">
@@ -32,37 +37,39 @@
   <!-- ============ OVERVIEW ============ -->
   <section id="overview" class="tab active">
     <div class="hero">
-      <h2>An honest, end-to-end wildfire system for Oregon</h2>
+      <h2>An end-to-end wildfire model for Oregon</h2>
       <p class="lead">A reproducible pipeline trained on <strong id="ov-rows">—</strong> real
-        cell-weeks of MODIS fire labels, GRIDMET weather, terrain, fuel and NDVI
-        (2001–2024), plus NIFC ignition cause. Three deliverables — a per-cell
+        cell-weeks of MODIS fire labels, GRIDMET weather, terrain, fuel and NDVI from 2001 to 2024,
+        with NIFC ignition cause layered in. It produces three things: a per-cell
         <em>risk surface</em>, per-region <em>fire-count</em> forecasts, and a satellite
-        <em>burn-scar detector</em> — all evaluated with leakage-free cross-validation.</p>
+        <em>burn-scar detector</em>. Every score on this site comes from cross-validation
+        built so the model can't peek at the answer.</p>
     </div>
     <div class="cards" id="ov-cards"></div>
     <div class="ov-grid">
       <div class="panel">
         <h3>The headline finding</h3>
-        <p>Predicting weekly fire in a 36&nbsp;km² cell from environment alone is
-        <em>genuinely hard</em> — absolute scores are low for every method. The real win is
-        <strong>spatial generalization</strong>: under leave-one-region-out cross-validation the
-        gradient-boosted model beats a climatology baseline ~4×, while climatology collapses to
-        no-skill (ROC-AUC 0.50). The model transfers to regions it never trained on; "where fires
-        usually happen" does not.</p>
-        <p>Two tempting-but-inflated results were caught and rejected along the way — a
-        fire-<em>persistence</em> shortcut (PR-AUC 0.65) and a trivially-separable synthetic
-        detector (1.00). The reported numbers are lower and trustworthy.</p>
+        <p>Calling whether a 36&nbsp;km² cell will burn in a given week, using environment alone,
+        is hard. Absolute scores stay low no matter which method you throw at it. What actually
+        separates the methods is <strong>spatial generalization</strong>. Under
+        leave-one-region-out cross-validation the gradient-boosted model beats a climatology
+        baseline by roughly 4×, and climatology drops to no-skill (ROC-AUC 0.50). The model
+        carries over to regions it never saw in training. "Where fires usually happen" does not.</p>
+        <p>Two results looked great and got thrown out: a fire-<em>persistence</em> shortcut that
+        pushed PR-AUC to 0.65, and a synthetic detector that scored a perfect 1.00 because the
+        task was trivially separable. The numbers we report are lower, and they hold up.</p>
       </div>
       <div class="panel">
         <h3>What drives risk</h3>
-        <p class="muted">Top model features by mean |SHAP| — real fire physics, not artifacts.</p>
+        <p class="muted">Top features by mean |SHAP|. These line up with fire physics rather than
+          data artifacts.</p>
         <div id="ov-shap"></div>
       </div>
     </div>
     <div class="panel">
       <h3>Oregon fire activity by year (real MODIS)</h3>
-      <p class="muted">Burned cell-weeks per fire season. 2024 was a record year; 2019 was quiet —
-        the data reproduces Oregon's known fire history.</p>
+      <p class="muted">Burned cell-weeks per fire season. 2024 ran hot and 2019 was quiet, which
+        matches Oregon's actual record.</p>
       <div id="ov-yearchart"></div>
     </div>
   </section>
@@ -77,16 +84,24 @@
           </label>
           <label class="chk"><input type="checkbox" id="citiesToggle" checked/> Cities</label>
           <label class="chk"><input type="checkbox" id="distToggle"/> Districts</label>
-          <span class="hint">Click any city or any point in Oregon for detail →</span>
+          <span class="hint">Click any tile or city to inspect it →</span>
         </div>
         <div id="leaflet"></div>
         <div id="legend" class="legend"></div>
       </div>
       <aside id="detail" class="detail">
         <div class="detail-empty">
-          <p>🛰️</p>
-          <p>Click a hexagon on the map to inspect that cell — terrain, fuel, climate
-            normals, NDVI, fire history by year, and modeled risk.</p>
+          <p class="detail-empty-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3.5" y="3.5" width="7" height="7" rx="1"/>
+              <rect x="13.5" y="3.5" width="7" height="7" rx="1"/>
+              <rect x="3.5" y="13.5" width="7" height="7" rx="1"/>
+              <rect x="13.5" y="13.5" width="7" height="7" rx="1"/>
+            </svg>
+          </p>
+          <p>Pick a tile to see what's behind its risk: terrain, fuel, climate normals,
+            NDVI, year-by-year fire history, and the modeled score.</p>
         </div>
       </aside>
     </div>
@@ -94,13 +109,13 @@
 
   <!-- ============ FORECAST ============ -->
   <section id="forecast" class="tab">
-    <h2>Weekly forecast — <span id="fc-year">2025</span> fire season</h2>
-    <p class="muted">Predictions made <strong>now</strong> by the trained risk model for every
-      Oregon hex, week by week. Each week's surface uses the per-cell climatology of every
-      input feature (weather, NDVI, drought, fuel) for that week-of-year run through the
-      gradient-boosted model — an honest "expected risk under typical conditions" forecast,
-      since real seasonal weather forecasts aren't part of this pipeline. Compares against
-      actuals as 2025 data becomes available (see <em>Predictions Tracker</em>).</p>
+    <h2>Weekly forecast: <span id="fc-year">2025</span> fire season</h2>
+    <p class="muted">The trained risk model run forward over every Oregon cell, one week at a time.
+      For each week of the year it takes the per-cell climatology of every input (weather, NDVI,
+      drought, fuel) and feeds that through the gradient-boosted model. Read it as "expected risk
+      under typical conditions for this week," not a weather forecast: real seasonal weather isn't
+      part of the pipeline. The <em>Predictions Tracker</em> compares it against actuals as 2025
+      data lands.</p>
 
     <div class="fc-headline" id="fc-headline"></div>
 
@@ -134,13 +149,12 @@
 
   <!-- ============ TRACKER ============ -->
   <section id="tracker" class="tab">
-    <h2>Predictions Tracker — locked predictions vs. reality</h2>
-    <p class="muted">All predictions on this page were <strong>locked at build time</strong>
-      (see timestamp) — they cannot be changed after the fact. When the 2025 fire season is
-      complete (or partially complete), run
-      <code>uv run python scripts/verify_predictions.py</code> to pull real MODIS observations
-      via Earth Engine and the comparison columns below populate. This is the project's most
-      honest test: out-of-time, out-of-sample, against ground truth.</p>
+    <h2>Predictions Tracker: locked predictions vs. reality</h2>
+    <p class="muted">Everything on this page was <strong>locked at build time</strong> (see the
+      timestamp) and can't be edited after the fact. Once the 2025 season is partway or fully done,
+      <code>uv run python scripts/verify_predictions.py</code> pulls the real MODIS observations
+      from Earth Engine and the comparison columns below fill in. This is the test that matters:
+      out-of-time, out-of-sample, checked against ground truth.</p>
 
     <div class="panel" id="tr-status"></div>
 
@@ -157,8 +171,9 @@
 
     <div class="panel">
       <h3>Top 40 highest-risk cells (locked)</h3>
-      <p class="muted">Mean predicted risk across the 2025 fire season. Hit = the cell actually
-        burned during 2025 (≥1 cell-week with MODIS-detected fire) — fills in after verification.</p>
+      <p class="muted">Mean predicted risk across the 2025 fire season. "Hit" means the cell actually
+        burned in 2025 (at least one cell-week with MODIS-detected fire). These fill in after
+        verification.</p>
       <div id="tr-cells"></div>
     </div>
 
@@ -171,30 +186,31 @@
   <!-- ============ RESULTS ============ -->
   <section id="results" class="tab">
     <h2>Models &amp; Results</h2>
-    <p class="muted">All metrics from spatially/temporally honest cross-validation on real data.
-      PR-AUC is the headline (rare-event); lift = PR-AUC ÷ base rate; recall@20% = fraction of
-      fires caught when flagging the top 20% riskiest cells; Brier = calibration (lower better).</p>
+    <p class="muted">Every metric here comes from cross-validation that respects space and time, on
+      real data. PR-AUC is the headline for this rare-event problem; lift = PR-AUC ÷ base rate;
+      recall@20% is the share of fires caught when you flag the top 20% riskiest cells; Brier
+      measures calibration (lower is better).</p>
 
     <div class="ov-grid">
       <div class="panel">
-        <h3>Risk model vs. baselines — forward-chaining (time) CV</h3>
+        <h3>Risk model vs. baselines: forward-chaining (time) CV</h3>
         <div id="tbl-fc"></div>
       </div>
       <div class="panel">
-        <h3>Risk model vs. baselines — spatial-block CV</h3>
+        <h3>Risk model vs. baselines: spatial-block CV</h3>
         <div id="tbl-sb"></div>
       </div>
     </div>
 
     <div class="panel callout">
-      <h3>⚠️ The honest interpretation</h3>
-      <p>We deliberately <strong>exclude <code>fire_lag1</code></strong> (did this cell burn last
-        week?). On real data fires persist week-to-week, so it dominates and inflates PR-AUC to
-        ~0.65 — but that is fire <em>continuation</em>, not risk. The numbers above are the honest
-        <strong>environmental</strong> skill. They are modest in absolute terms because weekly
-        cell-level fire is rare and hard, but the GBM beats both baselines on
-        <strong>both</strong> CV schemes, and ~4× climatology spatially — the meaningful,
-        generalizable result.</p>
+      <h3>How to read these numbers</h3>
+      <p>We leave out <strong><code>fire_lag1</code></strong> on purpose (did this cell burn last
+        week?). On real data fires carry over week to week, so that one feature takes over and
+        pushes PR-AUC to about 0.65. But that's measuring fire <em>continuation</em>, not risk. The
+        table above is the <strong>environmental</strong> skill on its own. The absolute values are
+        modest, because weekly cell-level fire is both rare and hard to call. What counts is
+        that the GBM beats both baselines under <strong>both</strong> CV schemes, and roughly 4×
+        climatology spatially. That part generalizes.</p>
     </div>
 
     <div class="ov-grid">
@@ -204,12 +220,12 @@
         <img class="figimg" src="assets/shap_importance.png" alt="SHAP importance" loading="lazy"/>
       </div>
       <div class="panel">
-        <h3>Fire-detection CNN — real Sentinel-2</h3>
+        <h3>Fire-detection CNN on real Sentinel-2</h3>
         <div id="cnn-box"></div>
-        <p class="muted small">A first attempt with active-fire labels + a season median scored
-          near chance (ROC-AUC ~0.59) — the median averages the transient fire away. Switching to
-          <strong>burn-scar</strong> detection (burned-area labels + post-peak composite) lifted it
-          to the figures shown, on held-out spatial blocks.</p>
+        <p class="muted small">A first attempt paired active-fire labels with a season median and
+          scored near chance (ROC-AUC ~0.59): the median averages the brief fire signal away.
+          Reframing it as <strong>burn-scar</strong> detection (burned-area labels plus a post-peak
+          composite) lifted it to the figures shown, on held-out spatial blocks.</p>
       </div>
     </div>
 
@@ -240,13 +256,13 @@
       <div class="panel">
         <h3>Pipeline at a glance</h3>
         <ol class="pipeline">
-          <li><b>Ingest</b> — Earth Engine (MODIS burned area + thermal, GRIDMET, SRTM, WorldCover,
-            NDVI, GRIDMET drought) + NIFC ignition cause, on an H3 grid.</li>
-          <li><b>Features</b> — antecedent weather windows, dryness memory, interactions, NDVI
+          <li><b>Ingest:</b> Earth Engine (MODIS burned area + thermal, GRIDMET, SRTM, WorldCover,
+            NDVI, GRIDMET drought) plus NIFC ignition cause, on an H3 grid.</li>
+          <li><b>Features:</b> antecedent weather windows, dryness memory, interactions, NDVI
             anomaly, ignition-cause priors.</li>
-          <li><b>Models</b> — LightGBM risk surface, negative-binomial counts, EfficientNet
+          <li><b>Models:</b> LightGBM risk surface, negative-binomial counts, EfficientNet
             burn-scar CNN.</li>
-          <li><b>Evaluation</b> — spatial-block / leave-region-out / forward-chaining CV; PR-AUC,
+          <li><b>Evaluation:</b> spatial-block, leave-region-out and forward-chaining CV; PR-AUC,
             Brier, recall@threshold; SHAP.</li>
         </ol>
       </div>
@@ -265,10 +281,10 @@
 </footer>
 
 <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="data/meta.js"></script>
-<script src="data/cells.js"></script>
+<script src="data/meta.js?v=8"></script>
+<script src="data/cells.js?v=8"></script>
 <script src="data/predictions.js"></script>
-<script src="paper.js"></script>
-<script src="app.js?v=7"></script>
+<script src="paper.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
