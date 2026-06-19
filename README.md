@@ -55,8 +55,12 @@ the whole pipeline before any real data is pulled.
 
 ### Interactive website
 
-A self-contained atlas lives in [`site/`](site/): a clickable risk map with per-cell
-detail, results, a data explorer, and a paper. Build its data and serve it:
+A self-contained atlas lives in [`site/`](site/): a clickable hex risk map with
+per-cell detail, a **Live Fire Watch** (FIRMS active-fire detections confirmed by the
+burn-scar CNN on recent Sentinel-2 imagery), a **Fire Danger Check** comparing the
+model's weekly per-district caution against the ERC-conditions rating, a weekly
+forecast, a predictions tracker, results, a data explorer, and a paper. Build its data
+and serve it:
 
 ```powershell
 uv run python scripts/build_site.py                 # refresh site/data from outputs

@@ -282,6 +282,19 @@ def build(cfg) -> dict:
         "actuals": prior.get("actuals") if same_year else None,
     }, indent=2))
 
+    # ---- weekly fire-danger check (model caution vs. ERC-conditions caution) ----
+    danger = None
+    try:
+        from wildfire.eval.fire_danger import compute_fire_danger
+        from wildfire.ingest.districts import assign_districts
+        dmap = assign_districts(surf, cfg)
+        danger = compute_fire_danger(cfg, feats, forecast, dmap)
+        print(f"   fire-danger check: {danger['summary'].get('exact_rate', 0)*100:.0f}% exact, "
+              f"{danger['summary'].get('within1_rate', 0)*100:.0f}% within one class "
+              f"({danger['summary'].get('n_district_weeks', 0)} district-weeks)")
+    except Exception as exc:
+        print(f"   ! fire-danger check skipped: {exc}")
+
     meta = {
         "manifest": manifest, "years": years,
         "schemes": {s: scheme_table(s) for s in tab["schemes"]},
@@ -293,6 +306,7 @@ def build(cfg) -> dict:
         "hexes": build_hex_layer(cells, SURFACE_METRICS),
         "cities": [{"name": n, "lat": lat, "lon": lon, "pop": pop} for n, lat, lon, pop in OREGON_CITIES],
         "forecast": forecast,
+        "danger": danger,
         "predictions": json.loads((site / "data" / "predictions.json").read_text())
         if (site / "data" / "predictions.json").exists() else None,
     }

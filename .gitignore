@@ -28,6 +28,12 @@ outputs/models/*
 outputs/metrics/*
 outputs/figures/*
 !outputs/**/.gitkeep
+# Keep the trained burn-scar detector so the Live Fire Watch CI can run the CNN
+# confirmation (and so a fresh clone can score detections without retraining).
+# Re-include the cnn/ dir first — git can't un-ignore a file under an excluded dir.
+!outputs/models/cnn/
+outputs/models/cnn/*
+!outputs/models/cnn/fire_detector.pt
 
 # Earth Engine / Google credentials — NEVER commit these.
 *.json.key

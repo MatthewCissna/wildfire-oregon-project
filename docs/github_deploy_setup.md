@@ -150,6 +150,30 @@ runs automatically every Monday morning during fire season.
 
 ---
 
+## Live Fire Watch (optional, near-real-time)
+
+The **Live Fire Watch** tab runs its own scheduled workflow, `livescan.yml`. Every
+six hours during fire season it pulls the last couple of days of FIRMS thermal
+detections over Oregon, snaps them to the hex grid, and runs the burn-scar CNN on a
+recent Sentinel-2 patch of each hot cell to confirm whether the imagery looks burned.
+
+It reuses the **same** `EE_SERVICE_ACCOUNT_KEY` and `EE_PROJECT` secrets as the
+predictions updater — by default the active-fire data comes from the Earth Engine
+FIRMS collection, so **no extra setup is needed**. The trained detector
+(`outputs/models/cnn/fire_detector.pt`) is committed so the Action can score
+detections without retraining.
+
+**Optional — lower latency.** For faster NRT detections, get a free
+[FIRMS map key](https://firms.modaps.eosdis.nasa.gov/api/area/) and add it as a
+repository secret named `FIRMS_MAP_KEY`. When present, the NASA endpoint is used
+instead of Earth Engine FIRMS (and it adds fire radiative power).
+
+Run it by hand from the **Actions** tab → *Live fire scan* → **Run workflow**. Until
+the first scheduled run lands, the tab shows a clearly labeled demo: synthetic
+detections seeded in high-risk cells, still scored by the real CNN.
+
+---
+
 ## What runs where, summarized
 
 | Trigger | Workflow | What it does |
@@ -157,5 +181,6 @@ runs automatically every Monday morning during fire season.
 | Push to `main` (anything in `site/`) | `pages.yml` | Deploys current `site/` to Pages |
 | Manual ▶ in Actions tab | `update.yml` | Pulls fresh MODIS, refreshes predictions, commits |
 | Cron, Mondays 09:00 UTC, May–Nov | `update.yml` | Same — fully automatic |
+| Cron, every 6 h, May–Nov | `livescan.yml` | FIRMS active-fire + CNN confirm → Live Fire Watch |
 
 That's it. Once the secrets are in, you don't touch anything.

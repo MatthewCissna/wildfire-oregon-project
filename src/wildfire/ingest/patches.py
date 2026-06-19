@@ -253,6 +253,85 @@ def pull_s2_patches(
     return {"X": X, "y": y, "meta": meta, "channels": channels}
 
 
+def _s2_recent_composite(cfg: Config, end_date: str, window_days: int, region):
+    """Cloud-filtered Sentinel-2 median over the last ``window_days`` + indices.
+
+    Same band/index stack the detector was trained on, but over a recent window so
+    the live scan looks at current imagery rather than a seasonal composite.
+    """
+    import ee
+
+    ds = cfg["datasets"]
+    bands6 = ["B2", "B3", "B4", "B8", "B11", "B12"]
+    end = ee.Date(end_date)
+    start = end.advance(-int(window_days), "day")
+    s2 = (
+        ee.ImageCollection(ds["s2_sr"]).filterDate(start, end).filterBounds(region)
+        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cfg.get("patches.max_cloud_pct", 40)))
+        .median().select(bands6).divide(10000)
+    )
+    ndvi = s2.normalizedDifference(["B8", "B4"]).rename("NDVI")
+    nbr = s2.normalizedDifference(["B8", "B12"]).rename("NBR")
+    ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
+    bai = s2.expression(
+        "1.0/((0.1-RED)**2+(0.06-NIR)**2)", {"RED": s2.select("B4"), "NIR": s2.select("B8")}
+    ).rename("BAI").clamp(0, 50)
+    return s2.addBands([ndvi, nbr, ndmi, bai])
+
+
+def pull_live_s2_patches(cfg: Config, points, *, end_date: str, window_days: int = 20,
+                         thumbs: bool = True):
+    """Extract a recent S2 patch (and optional thumbnail URL) per (cell_id, lat, lon).
+
+    Returns ``(patches: dict[cell_id -> (C,H,W) array], thumb_urls: dict[cell_id -> str])``.
+    Earth Engine only; the caller falls back to synthetic patches when EE is absent.
+    """
+    import ee
+
+    from wildfire.ingest.boundary import oregon_ee_geometry
+    from wildfire.ingest.earth_engine import _getinfo_with_retry
+    from wildfire.ingest.ee_auth import initialize_ee
+
+    cfg = cfg or load_config()
+    initialize_ee(cfg)
+    oregon = oregon_ee_geometry(cfg)
+    comp = _s2_recent_composite(cfg, end_date, window_days, oregon)
+    channels = channel_names(cfg)
+    size = int(cfg.get("patches.size_px", 64))
+    radius = size // 2
+    scale = int(cfg.get("patches.scale_m", 20))
+
+    arr = comp.select(channels).neighborhoodToArray(ee.Kernel.square(radius, "pixels"))
+    feats = [ee.Feature(ee.Geometry.Point([lon, lat]), {"cell_id": cid}) for cid, lat, lon in points]
+    sampled = _getinfo_with_retry(
+        arr.sampleRegions(collection=ee.FeatureCollection(feats), scale=scale, geometries=False)
+    )
+    patches = {}
+    for feat in sampled["features"]:
+        pr = feat["properties"]
+        cid = pr.get("cell_id")
+        try:
+            patch = np.stack([np.array(pr[c], dtype=np.float32) for c in channels], axis=0)
+        except (KeyError, ValueError):
+            continue
+        if patch.shape[1] < size or patch.shape[2] < size or not np.isfinite(patch).all():
+            continue
+        patches[cid] = patch[:, :size, :size]
+
+    thumb_urls = {}
+    if thumbs:
+        rgb = comp.select(["B12", "B8", "B4"])  # SWIR/NIR/red false color — burns glow
+        for cid, lat, lon in points:
+            reg = ee.Geometry.Point([lon, lat]).buffer(size * scale / 2).bounds()
+            try:
+                thumb_urls[cid] = rgb.getThumbURL(
+                    {"region": reg, "dimensions": 96, "min": 0.0, "max": 0.45, "format": "png"}
+                )
+            except Exception:  # pragma: no cover - thumbnail is best-effort
+                pass
+    return patches, thumb_urls
+
+
 # --------------------------------------------------------------------------- #
 # Live Earth Engine patch export (batch Export.toDrive alternative)
 # --------------------------------------------------------------------------- #

@@ -3,6 +3,7 @@
   "use strict";
   const META = window.WF_META, CELLS = window.WF_CELLS.cells, YEARS = window.WF_CELLS.years;
   const SURF = META.surfaces;
+  const ID2I = {}; CELLS.forEach((c, i) => { ID2I[c.id] = i; });  // cell id -> hex index
   const $ = (s, r) => (r || document).querySelector(s);
   const fmt = (v, n = 2) => (v == null || isNaN(v)) ? "—" : (+v).toFixed(n);
   const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
@@ -22,7 +23,9 @@
     document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
     document.querySelectorAll(".tab").forEach(s => s.classList.toggle("active", s.id === name));
     if (name === "map") { initMap(); if (map) setTimeout(() => map.invalidateSize(), 60); }
+    if (name === "livewatch") { buildLiveWatch(); if (lwMap) setTimeout(() => lwMap.invalidateSize(), 60); }
     if (name === "forecast") { initForecast(); if (fcMap) setTimeout(() => fcMap.invalidateSize(), 60); }
+    if (name === "danger") { buildDanger(); }
     if (name === "tracker") { buildTracker(); if (trMap) setTimeout(() => trMap.invalidateSize(), 60); }
     if (name === "results") { initDistMap(); if (dmap) setTimeout(() => dmap.invalidateSize(), 60); }
   }
@@ -459,6 +462,137 @@
       META.ecoregions.map(r => `<tr data-lat="${r.lat}" data-lon="${r.lon}"><td>${r.name}</td><td>${r.cells}</td><td>${fmt(r.mean_risk * 100, 2)}%</td><td>${fmt(r.fire_rate, 2)}%</td><td>${r.fires_total.toLocaleString()}</td><td>${fmt(r.mean_elev, 0)} m</td></tr>`).join("") + `</table>`;
     $("#eco-table").addEventListener("click", ev => { const tr = ev.target.closest("tr[data-lat]"); if (!tr) return;
       showTab("map"); initMap(); if (map) { map.setView([+tr.dataset.lat, +tr.dataset.lon], 8); setTimeout(() => map.invalidateSize(), 60); } });
+  }
+
+  /* ---------- live fire watch ---------- */
+  const FIRMS_STOPS = ["#3a1505", "#e8742b", "#ffd98a"];
+  let lwMap, lwDetLayer;
+  function cnnTag(d) {
+    if (d.cnn_prob == null) return '<span class="badge">not imaged</span>';
+    const pct = (d.cnn_prob * 100).toFixed(0) + "%";
+    return d.cnn_prob >= 0.5
+      ? `<span class="badge ok">burn-scar confirmed · ${pct}</span>`
+      : `<span class="badge wait">low burn signal · ${pct}</span>`;
+  }
+  function livePopup(d) {
+    return `<b>${d.near_city || "Cell"}</b> ${d.near_km != null ? `<span class="muted">(${d.near_km} km)</span>` : ""}<br>
+      <span class="muted">${d.eco || ""}</span><br>
+      Brightness <b>${d.t21 != null ? d.t21 + " K" : "—"}</b> · FIRMS conf ${d.confidence != null ? d.confidence : "—"}${d.frp != null ? ` · FRP ${d.frp}` : ""}<br>
+      Detected ${d.acq_date || "—"}<br>${cnnTag(d)}
+      ${d.thumb ? `<br><img class="lw-thumb" src="${d.thumb}" alt="Sentinel-2 patch"/>` : ""}`;
+  }
+  function buildLiveWatch() {
+    const LV = window.WF_LIVE;
+    if (!LV) { $("#lw-status").innerHTML = '<div class="muted">No scan yet — run <code>scripts/live_fire_scan.py</code>.</div>'; return; }
+    const demo = LV.mode !== "live";
+    const when = (LV.generated_utc || "").slice(0, 16).replace("T", " ");
+    $("#lw-status").innerHTML = `<div class="lw-statline">
+      <span class="badge ${demo ? "wait" : "ok"}">${demo ? "demo data" : "live"}</span>
+      <span><b>${LV.n_active}</b> active cell(s) · <b>${LV.n_confirmed}</b> CNN-confirmed burn(s) · source ${LV.source} · scanned ${when} UTC</span></div>
+      ${demo ? '<div class="muted small" style="margin-top:8px">Demo mode: synthetic FIRMS detections seeded in high-risk cells, each scored by the <b>real trained burn-scar CNN</b>. The scheduled job swaps this for live Earth Engine FIRMS plus Sentinel-2 imagery and thumbnails.</div>' : ""}`;
+    $("#lw-source").textContent = demo ? "Showing demo data until the scheduled scan runs." : "";
+    $("#lw-count").textContent = `· ${LV.detections.length}`;
+    initLiveMap(LV);
+    renderLiveList(LV);
+  }
+  function initLiveMap(LV) {
+    if (!lwMap) {
+      if (typeof L === "undefined") { $("#lw-map").innerHTML = '<div style="padding:20px;color:#9aa7b4">Map needs internet for Leaflet.</div>'; return; }
+      lwMap = L.map("lw-map", { preferCanvas: true, minZoom: 5, maxZoom: 11 }).setView([44.0, -120.5], 6.3);
+      L.tileLayer(DARK_TILES, { subdomains: "abcd" }).addTo(lwMap);
+      const r0 = L.canvas({ padding: 0.5 }), base = L.layerGroup();
+      META.hexes.poly.forEach(v => L.polygon(v, { renderer: r0, weight: 0.2, color: "rgba(70,80,92,.35)", fill: false }).addTo(base));
+      base.addTo(lwMap);
+      lwDetLayer = L.layerGroup().addTo(lwMap);
+      drawLegend({ label: "FIRMS brightness", unit: "K", stops: FIRMS_STOPS, domain: [310, 420] }, "#lw-legend");
+    }
+    lwDetLayer.clearLayers();
+    const r = L.canvas({ padding: 0.5 });
+    LV.detections.forEach(d => {
+      const i = ID2I[d.id], sev = d.t21 != null ? Math.min(1, Math.max(0, (d.t21 - 310) / 110)) : 0.6;
+      if (i != null) L.polygon(META.hexes.poly[i], { renderer: r, weight: 0.7, color: "#ffce8a", fillColor: rampFromStops(FIRMS_STOPS, sev), fillOpacity: 0.85 }).addTo(lwDetLayer);
+      L.circleMarker([d.lat, d.lon], { radius: 6, color: "#fff", weight: 1.4, fillColor: "#ff4d3d", fillOpacity: 0.95 })
+        .bindPopup(livePopup(d), { className: "citytip", maxWidth: 240 }).addTo(lwDetLayer);
+    });
+  }
+  function renderLiveList(LV) {
+    if (!LV.detections.length) { $("#lw-list").innerHTML = '<div class="muted">No active detections in the current window. Quiet skies.</div>'; return; }
+    $("#lw-list").innerHTML = LV.detections.map((d, k) => `
+      <div class="lw-item" data-k="${k}">
+        ${d.thumb ? `<img class="lw-thumb" src="${d.thumb}" alt=""/>` : `<div class="lw-thumb lw-thumb-ph">no img</div>`}
+        <div class="lw-meta">
+          <div class="lw-title">${d.near_city || "Cell"} ${d.near_km != null ? `<span class="muted">${d.near_km} km</span>` : ""}</div>
+          <div class="muted small">${d.eco || ""}${d.acq_date ? " · " + d.acq_date : ""}</div>
+          <div class="lw-nums"><span>${d.t21 != null ? d.t21 + " K" : "—"}</span><span>conf ${d.confidence != null ? d.confidence : "—"}</span>${d.frp != null ? `<span>FRP ${d.frp}</span>` : ""}</div>
+          <div>${cnnTag(d)}</div>
+        </div>
+      </div>`).join("");
+    if (!$("#lw-list").dataset.bound) {
+      $("#lw-list").dataset.bound = "1";
+      $("#lw-list").addEventListener("click", ev => {
+        const it = ev.target.closest(".lw-item"); if (!it || !lwMap) return;
+        const d = (window.WF_LIVE.detections || [])[+it.dataset.k]; if (!d) return;
+        lwMap.setView([d.lat, d.lon], Math.max(lwMap.getZoom(), 8));
+      });
+    }
+  }
+
+  /* ---------- fire danger check ---------- */
+  const DG_COLORS = ["#2f7d4f", "#6bbf4a", "#f2c43d", "#e8742b", "#d23b3b"];
+  const DG_LABELS = ["None", "Low", "Moderate", "High", "Extreme"];
+  const AGREE_COLORS = ["#2f7d4f", "#c4a13a", "#c0432f"]; // exact, off-by-one, off>=2
+  function dgBadge(i) { return `<span class="dbadge" style="background:${DG_COLORS[i]}">${DG_LABELS[i]}</span>`; }
+  function buildDanger() {
+    const D = META.danger;
+    if (!D || !D.districts || !D.districts.length) { $("#dg-cards").innerHTML = '<div class="muted">No danger comparison available — rebuild the site.</div>'; return; }
+    const host = $("#danger");
+    if (host.dataset.built) return;
+    host.dataset.built = "1";
+    const s = D.summary;
+    $("#dg-cards").innerHTML = [
+      { big: (s.exact_rate * 100).toFixed(0) + "%", lbl: "Exact agreement", note: "model class = conditions class" },
+      { big: (s.within1_rate * 100).toFixed(0) + "%", lbl: "Within one class", note: s.n_district_weeks + " district-weeks" },
+      { big: s.mean_abs_class_diff.toFixed(2), lbl: "Mean class gap", note: "avg |model − conditions|" },
+      { big: D.districts.length, lbl: "ODF districts", note: "vs ERC climatology" },
+    ].map(c => `<div class="card"><div class="big">${c.big}</div><div class="lbl">${c.lbl}</div><div class="note">${c.note}</div></div>`).join("");
+    $("#dg-week").textContent = "· " + D.current_week_label;
+
+    // This week, per district.
+    const cur = D.districts.map(d => {
+      const m = d.current.model, cn = d.current.cond, diff = Math.abs(m - cn);
+      const gap = diff === 0 ? '<span class="badge ok">match</span>'
+        : `<span class="badge ${diff === 1 ? "wait" : "miss"}">${m > cn ? "model hotter" : "model cooler"} · ${diff}</span>`;
+      return `<tr><td>${d.district}</td><td>${dgBadge(m)}</td><td>${dgBadge(cn)}</td><td>${d.current.erc != null ? d.current.erc : "—"}</td><td>${gap}</td></tr>`;
+    }).join("");
+    $("#dg-current").innerHTML = `<table class="t"><tr><th>District</th><th>Model says</th><th>Conditions say</th><th>ERC</th><th>Gap</th></tr>${cur}</table>`;
+
+    // Season agreement grid.
+    $("#dg-legend-grid").innerHTML = ["match", "off by one", "off by 2+"]
+      .map((t, i) => `<span class="dg-key"><i style="background:${AGREE_COLORS[i]}"></i>${t}</span>`).join("");
+    const weeks = D.districts[0].weeks;
+    let grid = `<div class="dg-grid" style="grid-template-columns:150px repeat(${weeks.length},minmax(10px,1fr))">`;
+    grid += `<div class="dg-corner"></div>` + weeks.map(w => `<div class="dg-col">${w.label.replace(/^[A-Za-z]+ /, "")}</div>`).join("");
+    D.districts.forEach(d => {
+      grid += `<div class="dg-rowlbl" title="${d.district}: ${(d.agreement_rate * 100).toFixed(0)}% exact">${d.district}</div>`;
+      d.weeks.forEach(w => {
+        const diff = Math.abs(w.model - w.cond), col = AGREE_COLORS[Math.min(2, diff)];
+        grid += `<div class="dg-cell" style="background:${col}" title="${d.district} · ${w.label}&#10;Model: ${DG_LABELS[w.model]} (${w.model_pct}%)&#10;Conditions: ${DG_LABELS[w.cond]} — ERC ${w.erc != null ? w.erc : "—"} (${w.cond_pct}%)"></div>`;
+      });
+    });
+    grid += `</div>`;
+    $("#dg-grid").innerHTML = grid;
+
+    // Confusion matrix.
+    const cm = s.confusion, maxc = Math.max(1, ...cm.flat());
+    let conf = `<table class="t dg-confusion"><tr><th>cond ↓ \\ model →</th>${DG_LABELS.map(l => `<th>${l}</th>`).join("")}</tr>`;
+    cm.forEach((row, i) => {
+      conf += `<tr><th>${DG_LABELS[i]}</th>` + row.map((v, j) => {
+        const a = v / maxc, rgb = i === j ? "47,125,79" : "200,90,55";
+        return `<td style="background:rgba(${rgb},${(0.10 + 0.82 * a).toFixed(2)})">${v}</td>`;
+      }).join("") + `</tr>`;
+    });
+    conf += `</table>`;
+    $("#dg-confusion").innerHTML = conf;
   }
 
   buildOverview(); buildResults(); buildData();

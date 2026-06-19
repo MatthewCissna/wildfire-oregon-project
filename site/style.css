@@ -207,6 +207,40 @@ table.t.click tr{cursor:pointer} table.t.click tr:hover td{background:var(--bg2)
 .badge.miss{background:rgba(215,25,28,.18);color:#ff8a8a;border:1px solid rgba(215,25,28,.4)}
 .badge.wait{background:rgba(255,179,71,.16);color:#ffb347;border:1px solid rgba(255,179,71,.4)}
 
+/* section sub-heading */
+.h2sub{font-weight:400;color:var(--muted);font-size:.65em}
+
+/* live fire watch */
+.lw-layout{display:grid;grid-template-columns:1.5fr 1fr;gap:14px;align-items:start}
+@media(max-width:900px){.lw-layout{grid-template-columns:1fr}}
+#lw-map{height:560px;background:#0b0e12}
+.lw-listpanel{max-height:560px;display:flex;flex-direction:column}
+#lw-list{overflow-y:auto;margin-top:4px;padding-right:4px}
+.lw-statline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--text)}
+.lw-item{display:flex;gap:10px;padding:9px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+.lw-item:hover{background:var(--bg2)}
+.lw-thumb{width:62px;height:62px;border-radius:6px;object-fit:cover;border:1px solid var(--line);flex:0 0 auto;background:#0b0e12}
+.lw-thumb-ph{display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted2)}
+.lw-meta{min-width:0}
+.lw-title{font-weight:600;font-size:13px}
+.lw-nums{display:flex;gap:10px;font-size:12px;color:var(--muted);margin:3px 0}
+.lw-nums span{white-space:nowrap}
+
+/* fire danger check */
+.dbadge{display:inline-block;padding:2px 9px;border-radius:6px;font-size:11px;font-weight:700;
+  color:#0b0e12;text-transform:uppercase;letter-spacing:.4px}
+.dg-legend{display:flex;gap:16px;margin:0 0 10px;font-size:12px;color:var(--muted)}
+.dg-key{display:inline-flex;align-items:center;gap:6px}
+.dg-key i{width:13px;height:13px;border-radius:3px;display:inline-block}
+.dg-grid{display:grid;gap:2px;align-items:center;overflow-x:auto}
+.dg-corner{height:18px}
+.dg-col{font-size:9px;color:var(--muted2);text-align:center;line-height:1}
+.dg-rowlbl{font-size:11px;color:var(--muted);text-align:right;padding-right:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dg-cell{height:17px;border-radius:2px;cursor:default}
+.dg-cell:hover{outline:1.5px solid #fff;outline-offset:-1px}
+.dg-confusion td{text-align:center;font-variant-numeric:tabular-nums}
+.dg-confusion th{font-size:11px}
+
 /* leaflet dark tweaks */
 .leaflet-container{background:#0b0e12}
 .leaflet-interactive{cursor:pointer}

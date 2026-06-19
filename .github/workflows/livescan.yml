@@ -1,0 +1,104 @@
+name: Live fire scan
+
+# Near-real-time active-fire watch for the site:
+#  1. Pull the last few days of FIRMS thermal detections over Oregon from Earth
+#     Engine (service-account key from GitHub Secrets), snapped to the H3 grid.
+#  2. For the hottest cells, pull a recent Sentinel-2 patch and run the trained
+#     burn-scar CNN to confirm whether the imagery looks burned.
+#  3. Write site/data/live_scan.{json,js}, commit, and deploy to Pages.
+#
+# Schedule: every 6 hours during fire season (May–Nov). Manually triggerable too.
+#
+# REQUIRED SECRETS (same as the predictions updater — see docs/github_deploy_setup.md):
+#   EE_SERVICE_ACCOUNT_KEY  base64-encoded service-account JSON
+#   EE_PROJECT              Earth Engine Cloud project id
+# OPTIONAL:
+#   FIRMS_MAP_KEY           NASA FIRMS map key for lower-latency NRT detections
+#                           (https://firms.modaps.eosdis.nasa.gov/api/area/ — free).
+#                           Without it, the Earth Engine FIRMS collection is used.
+
+on:
+  schedule:
+    # Every 6 hours, May through November.
+    - cron: "0 */6 * 5-11 *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "FIRMS look-back window in days"
+        required: false
+        default: "2"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: livescan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10 --python-preference only-managed
+
+      - name: Install project (with CNN extra for the detector)
+        run: uv sync --extra cnn
+
+      - name: Run the live fire scan
+        env:
+          EE_SERVICE_ACCOUNT_KEY: ${{ secrets.EE_SERVICE_ACCOUNT_KEY }}
+          EE_PROJECT: ${{ secrets.EE_PROJECT }}
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+        run: |
+          DAYS="${{ github.event.inputs.days }}"
+          uv run python scripts/live_fire_scan.py --days "${DAYS:-2}"
+
+      - name: Commit & push the live scan
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet site/data/live_scan.json site/data/live_scan.js; then
+            echo "No change in the live scan — exiting cleanly."
+            exit 0
+          fi
+          git add site/data/live_scan.json site/data/live_scan.js
+          git commit -m "chore: live fire scan ($(date -u +%Y-%m-%dT%H:%MZ))"
+          git push
+
+  # Publish in the same run — pushes made with GITHUB_TOKEN don't trigger pages.yml.
+  deploy:
+    needs: scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: "pages"
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

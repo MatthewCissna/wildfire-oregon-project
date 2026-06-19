@@ -6,7 +6,7 @@
 <title>Oregon Wildfire ML · Interactive Atlas</title>
 <link rel="preconnect" href="https://unpkg.com" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="stylesheet" href="style.css?v=9" />
+<link rel="stylesheet" href="style.css?v=10" />
 </head>
 <body>
 <header class="topbar">
@@ -25,7 +25,9 @@
   <nav class="tabs" id="tabs">
     <button data-tab="overview" class="active">Overview</button>
     <button data-tab="map">Risk Map</button>
+    <button data-tab="livewatch">Live Fire Watch</button>
     <button data-tab="forecast">Weekly Forecast</button>
+    <button data-tab="danger">Fire Danger</button>
     <button data-tab="tracker">Predictions Tracker</button>
     <button data-tab="results">Models &amp; Results</button>
     <button data-tab="data">Data Explorer</button>
@@ -104,6 +106,28 @@
     </div>
   </section>
 
+  <!-- ============ LIVE FIRE WATCH ============ -->
+  <section id="livewatch" class="tab">
+    <h2>Live Fire Watch <span class="h2sub">· satellite active-fire detection</span></h2>
+    <p class="muted">Recent FIRMS thermal detections (MODIS / VIIRS, refreshed a few times a
+      day) over Oregon, snapped to the hex grid. For the hottest cells we pull a fresh
+      Sentinel-2 patch and run the burn-scar CNN to confirm whether the imagery actually looks
+      burned — the thermal flag says "hot," the image model says "burned." <span id="lw-source"></span></p>
+
+    <div class="panel" id="lw-status"></div>
+
+    <div class="lw-layout">
+      <div class="mapwrap">
+        <div id="lw-map"></div>
+        <div id="lw-legend" class="legend"></div>
+      </div>
+      <div class="panel inset lw-listpanel">
+        <h3>Detections <span id="lw-count" class="muted"></span></h3>
+        <div id="lw-list"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ FORECAST ============ -->
   <section id="forecast" class="tab">
     <h2>Weekly forecast: <span id="fc-year">2025</span> fire season</h2>
@@ -141,6 +165,42 @@
       <h3>Expected weekly statewide fire activity (2025)</h3>
       <p class="muted">Sum of per-cell predicted risk; tracks the seasonal climatological arc.</p>
       <div id="fc-curve"></div>
+    </div>
+  </section>
+
+  <!-- ============ FIRE DANGER ============ -->
+  <section id="danger" class="tab">
+    <h2>Fire Danger Check <span class="h2sub">· model caution vs. conditions</span></h2>
+    <p class="muted">Each ODF fire-protection district gets two weekly fire-danger ratings on the
+      same <strong>none → extreme</strong> scale: one from the model's predicted activity, and one
+      from where that week's ERC (Energy Release Component, the standard fire-danger index Oregon
+      agencies use) falls in the district's own 2001–2024 climatology. This page asks whether the
+      model's caution lines up with the conditions-based caution.</p>
+
+    <div class="cards" id="dg-cards"></div>
+
+    <div class="panel">
+      <h3>This week by district <span id="dg-week" class="muted"></span></h3>
+      <p class="muted">Climatological "this week." Each district's model rating next to its
+        ERC-conditions rating, with the gap between them.</p>
+      <div id="dg-current"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Season agreement grid</h3>
+      <p class="muted">Rows are districts, columns are forecast weeks. Green = the model's class
+        matches the conditions class, amber = off by one step, red = further apart. Hover a square
+        for both ratings.</p>
+      <div id="dg-legend-grid" class="dg-legend"></div>
+      <div id="dg-grid"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Where they disagree</h3>
+      <p class="muted">Conditions class (rows) vs. model class (columns), counted over every
+        district-week. The diagonal is agreement; off-diagonal shows the model running hotter or
+        cooler than conditions.</p>
+      <div id="dg-confusion"></div>
     </div>
   </section>
 
@@ -289,10 +349,11 @@
 </footer>
 
 <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="data/meta.js?v=9"></script>
-<script src="data/cells.js?v=9"></script>
+<script src="data/meta.js?v=10"></script>
+<script src="data/cells.js?v=10"></script>
 <script src="data/predictions.js"></script>
-<script src="paper.js?v=9"></script>
-<script src="app.js?v=9"></script>
+<script src="data/live_scan.js?v=10"></script>
+<script src="paper.js?v=10"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
