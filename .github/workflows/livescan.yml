@@ -54,8 +54,18 @@ jobs:
       - name: Set up Python 3.10
         run: uv python install 3.10 --python-preference only-managed
 
-      - name: Install project (with CNN extra for the detector)
-        run: uv sync --extra cnn
+      - name: Install project (core deps — fast, has Earth Engine + FIRMS)
+        run: uv sync --no-extra cnn
+
+      - name: Add CPU PyTorch + timm for the detector (best-effort)
+        # The detector runs on CPU in CI, so install the lightweight CPU wheels
+        # instead of the ~2.5 GB CUDA build the `cnn` extra would pull. If this
+        # step fails, the scan still ships FIRMS detections (the CNN confirmation
+        # degrades to "not imaged" rather than failing the job).
+        continue-on-error: true
+        run: |
+          uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          uv pip install timm
 
       - name: Run the live fire scan
         env:

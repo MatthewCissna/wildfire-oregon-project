@@ -479,7 +479,7 @@
       <span class="muted">${d.eco || ""}</span><br>
       Brightness <b>${d.t21 != null ? d.t21 + " K" : "—"}</b> · FIRMS conf ${d.confidence != null ? d.confidence : "—"}${d.frp != null ? ` · FRP ${d.frp}` : ""}<br>
       Detected ${d.acq_date || "—"}<br>${cnnTag(d)}
-      ${d.thumb ? `<br><img class="lw-thumb" src="${d.thumb}" alt="Sentinel-2 patch"/>` : ""}`;
+      ${d.thumb ? `<br><img class="lw-thumb" src="${d.thumb}" alt="Sentinel-2 patch" onerror="this.style.display='none'"/>` : ""}`;
   }
   function buildLiveWatch() {
     const LV = window.WF_LIVE;
@@ -519,7 +519,7 @@
     if (!LV.detections.length) { $("#lw-list").innerHTML = '<div class="muted">No active detections in the current window. Quiet skies.</div>'; return; }
     $("#lw-list").innerHTML = LV.detections.map((d, k) => `
       <div class="lw-item" data-k="${k}">
-        ${d.thumb ? `<img class="lw-thumb" src="${d.thumb}" alt=""/>` : `<div class="lw-thumb lw-thumb-ph">no img</div>`}
+        ${d.thumb ? `<img class="lw-thumb" src="${d.thumb}" alt="" onerror="this.style.display='none'"/>` : `<div class="lw-thumb lw-thumb-ph">no img</div>`}
         <div class="lw-meta">
           <div class="lw-title">${d.near_city || "Cell"} ${d.near_km != null ? `<span class="muted">${d.near_km} km</span>` : ""}</div>
           <div class="muted small">${d.eco || ""}${d.acq_date ? " · " + d.acq_date : ""}</div>
