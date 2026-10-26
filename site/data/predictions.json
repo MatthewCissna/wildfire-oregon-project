@@ -553,61 +553,13 @@
     ]
   },
   "actuals": {
-    "verified_at_utc": "2026-10-19T16:00:39.943801+00:00",
+    "verified_at_utc": "2026-10-26T15:37:19.506340+00:00",
     "target_year": 2025,
     "state_actual_fires": 2176,
     "districts": [
       {
         "district": "Outside ODF protection",
-        "actual_fires": 1201
-      },
-      {
-        "district": "Central Oregon",
-        "actual_fires": 174
-      },
-      {
-        "district": "Klamath-Lake",
-        "actual_fires": 161
-      },
-      {
-        "district": "Northwest Oregon",
-        "actual_fires": 132
-      },
-      {
-        "district": "Douglas FPA",
-        "actual_fires": 127
-      },
-      {
-        "district": "South Cascade",
-        "actual_fires": 112
-      },
-      {
-        "district": "Coos FPA",
-        "actual_fires": 75
-      },
-      {
-        "district": "West Oregon",
-        "actual_fires": 53
-      },
-      {
-        "district": "Southwest Oregon",
-        "actual_fires": 42
-      },
-      {
-        "district": "Northeast Oregon",
-        "actual_fires": 39
-      },
-      {
-        "district": "North Cascade",
-        "actual_fires": 36
-      },
-      {
-        "district": "Western Lane",
-        "actual_fires": 20
-      },
-      {
-        "district": "Walker Range FPA",
-        "actual_fires": 4
+        "actual_fires": 2176
       }
     ],
     "top_cells": [
